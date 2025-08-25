@@ -336,7 +336,7 @@ app.post('/broadcast', async (req, res) => {
 
     const promises = [];
     for (const [wa, client] of clientsByWa.entries()) {
-      const body = `Hi ${client.name}, this is ${agentName}.\nHere are my available 1-hour meeting slots:\n\n${slotsText}\n\nReply with the number of your preferred slot (e.g., 2).`;
+      const body = `Hi ${client.name}, this is ${agentName}.\nHere are the available 1-hour meeting slots:\n\n${slotsText}\n\nReply with the number of your preferred slot (e.g., 2).`;
       promises.push(sendWa(wa, body));
     }
 
@@ -401,7 +401,7 @@ app.post('/whatsapp/inbound', async (req, res) => {
       await saveExcel();
     }
 
-    await sendWa(from, `Booked ✅: ${humanSlotLabel(slot.start, slot.end)}.\nThank you! I will send a calendar invite shortly.`);
+    await sendWa(from, `Booked ✅: ${humanSlotLabel(slot.start, slot.end)}.\nThank you! We will contact you as soon as possible!.`);
   } catch (err) {
     console.error('Inbound handler error:', err);
   }
