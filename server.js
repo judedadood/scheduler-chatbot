@@ -199,49 +199,67 @@ async function loadExcel(filePath) {
   const sheet = workbook.worksheets[0];
   if (!sheet) throw new Error('Excel has no sheets');
 
+  // 1) Ensure required headers exist (append any missing)
   const requiredHeaders = [
-    'Client Name','Contact Number','Booked Date','Booked Time','Status'
+    'Client Name', 'Contact Number', 'Booked Date', 'Booked Time', 'Status', 'Last Notified'
   ];
 
   const headerRow = sheet.getRow(1);
-  const existing = headerRow.values.map(v => typeof v === 'string' ? v.trim() : v);
+  const existing = (headerRow.values || []).map(v => (typeof v === 'string' ? v.trim() : v));
 
-  let headerMap = {};
   if (!existing || existing.length <= 1) {
+    // Empty/invalid header row: write all required headers
     headerRow.values = [
-      ,
-      'Client Name','Contact Number','Booked Date','Booked Time','Status'
+      , // 1-based indexing
+      'Client Name', 'Contact Number', 'Booked Date', 'Booked Time', 'Status', 'Last Notified'
     ];
     headerRow.commit();
-    headerMap = { 'Client Name':1, 'Contact Number':2, 'Booked Date':3, 'Booked Time':4, 'Status':5 };
   } else {
+    // Normalize and append missing headers
     const headers = [];
-    for (let i=1;i<=headerRow.cellCount;i++) {
+    for (let i = 1; i <= headerRow.cellCount; i++) {
       const val = headerRow.getCell(i).value;
-      headers.push(typeof val==='string' ? val.trim() : String(val||''));
+      headers.push(typeof val === 'string' ? val.trim() : String(val || ''));
     }
-
-    requiredHeaders.forEach(h => {
-      if (!headers.includes(h)) headers.push(h);
-    });
-
-    headerRow.values = [ , ...headers ];
+    requiredHeaders.forEach(h => { if (!headers.includes(h)) headers.push(h); });
+    headerRow.values = [, ...headers];
     headerRow.commit();
-    headers.forEach((h, idx) => headerMap[h] = idx+1);
   }
 
+  // 2) Build headerMap after header row is finalized
+  const headerMap = {};
+  for (let i = 1; i <= headerRow.cellCount; i++) {
+    const v = headerRow.getCell(i).value;
+    if (v) headerMap[String(v).trim()] = i;
+  }
+
+  // 3) Initialize missing Status to "Pending"
+  const statusIdx = headerMap['Status'];
   for (let r = 2; r <= sheet.rowCount; r++) {
     const row = sheet.getRow(r);
-    const statusCell = row.getCell(headerMap['Status']);
+    const statusCell = row.getCell(statusIdx);
     if (!statusCell.value) {
       statusCell.value = 'Pending';
       row.commit();
     }
   }
 
+  // 4) Ensure "Last Notified" column exists for all rows (blank by default)
+  const lnIdx = headerMap['Last Notified'];
+  for (let r = 2; r <= sheet.rowCount; r++) {
+    const row = sheet.getRow(r);
+    const c = row.getCell(lnIdx);
+    if (c.value === undefined || c.value === null) {
+      c.value = ''; // leave blank until a message is sent
+      row.commit();
+    }
+  }
+
+  // Persist any fixes
   await workbook.xlsx.writeFile(filePath);
   return { workbook, sheet, headerMap };
 }
+
 
 async function saveExcel() {
   if (!excelState) return;
@@ -281,26 +299,37 @@ app.post('/upload-clients', upload.single('file'), async (req, res) => {
     const filePath = req.file.path;
     const { workbook, sheet, headerMap } = await loadExcel(filePath);
 
+    // keep a handle to the workbook/sheet/headers for later writes
     excelState = { filePath, workbook, sheet, headerMap };
+
+    // reset in-memory map
     clientsByWa.clear();
 
-    const nameIdx = headerMap['Client Name'];
+    // column indexes
+    const nameIdx  = headerMap['Client Name'];
     const phoneIdx = headerMap['Contact Number'];
 
+    // >>> paste your loop here <<<
     for (let r = 2; r <= sheet.rowCount; r++) {
       const row = sheet.getRow(r);
       const name = (row.getCell(nameIdx).value || '').toString().trim();
       const phoneRaw = (row.getCell(phoneIdx).value || '').toString().trim();
       const wa = waFormat(phoneRaw);
-      if (wa) clientsByWa.set(wa, { name, phone: phoneRaw });
+      const status = (row.getCell(headerMap['Status']).value || '').toString().trim();
+      const lastNotified = row.getCell(headerMap['Last Notified']).value;
+
+      if (wa) {
+        clientsByWa.set(wa, { name, phone: phoneRaw, rowIndex: r, status, lastNotified });
+      }
     }
 
-    res.json({ ok: true, message: 'Excel loaded', filePath, totalClients: clientsByWa.size });
+    return res.json({ ok: true, message: 'Excel loaded', filePath, totalClients: clientsByWa.size });
   } catch (err) {
     console.error(err);
-    res.status(400).json({ ok: false, error: err.message });
+    return res.status(400).json({ ok: false, error: err.message });
   }
 });
+
 
 // 2) Set availability (text lines). Example body: { availabilityText: "25 Aug 1-5pm\n26 Aug 2-7pm" }
 app.post('/set-availability', (req, res) => {
