@@ -362,10 +362,25 @@ app.post('/broadcast', async (req, res) => {
       for (const r of rowIndices) {
         const row = excelState.sheet.getRow(r);
         row.getCell(excelState.headerMap['Last Notified']).value = whenISO;
-        // Optional: mark blank Status to 'Pending' so next broadcasts skip them automatically
-        // const sIdx = excelState.headerMap['Status'];
-        // const current = (row.getCell(sIdx).value || '').toString().trim().toLowerCase();
-        // if (!current) row.getCell(sIdx).value = 'Pending';
+        const sIdx = excelState.headerMap['Status'];
+        for (const r of rowIndices) {
+          const row = excelState.sheet.getRow(r);
+          row.getCell(excelState.headerMap['Last Notified']).value = whenISO;
+
+          const cur = (row.getCell(sIdx).value || '').toString().trim().toLowerCase();
+          if (cur !== 'confirmed') {
+            row.getCell(sIdx).value = 'Pending';
+          }
+          row.commit();
+        }
+
+        // keep in-memory aggregator in sync so future broadcasts skip immediately
+        const agg = statusByDigits.get(digits) || { confirmed: false, pending: false, notified: false, rowIndices: [] };
+        agg.pending = true;
+        agg.notified = true;
+        statusByDigits.set(digits, agg);
+        client.status = 'pending';
+
         row.commit();
       }
     });
