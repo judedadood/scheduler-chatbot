@@ -1,0 +1,18 @@
+{
+  "name": "prudential-wa-scheduler",
+  "version": "1.0.0",
+  "description": "WhatsApp meeting scheduler for Prudential agents using Node.js, Twilio, and Excel",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "twilio": "^5.3.4"
+  }
+}

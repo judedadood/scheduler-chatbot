@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prudential WhatsApp Scheduler</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    h1 { margin-bottom: 8px; }
+    section { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    label { display:block; margin: 8px 0 4px; font-weight: 600; }
+    textarea, input[type=file] { width: 100%; }
+    button { padding: 10px 16px; border-radius: 10px; border: 1px solid #222; background: #fff; cursor: pointer; }
+    button:hover { background: #f5f5f5; }
+    pre { background: #f7f7f7; padding: 12px; border-radius: 8px; overflow: auto; }
+    .grid { display:grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 800px){ .grid { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Prudential WhatsApp Scheduler</h1>
+  <p>Upload your client Excel, paste availability, broadcast slots, and download the updated Excel.</p>
+
+  <section>
+    <h2>1) Upload Clients Excel</h2>
+    <form id="uploadForm">
+      <label>Excel File (.xlsx)</label>
+      <input type="file" name="file" accept=".xlsx" required>
+      <br><br>
+      <button type="submit">Upload</button>
+    </form>
+    <pre id="uploadResult"></pre>
+  </section>
+
+  <section>
+    <h2>2) Set Availability</h2>
+    <label>Availability Text (one per line)</label>
+    <textarea id="availabilityText" rows="6" placeholder="25 Aug 1-5pm&#10;26 Aug 2-7pm"></textarea>
+    <br>
+    <button id="setAvBtn">Set Availability</button>
+    <pre id="avResult"></pre>
+  </section>
+
+  <section>
+    <h2>3) Broadcast to All Clients (WhatsApp)</h2>
+    <button id="broadcastBtn">Broadcast Now</button>
+    <pre id="broadcastResult"></pre>
+  </section>
+
+  <section>
+    <h2>4) Download Updated Excel</h2>
+    <a href="/download-latest"><button>Download Latest</button></a>
+  </section>
+
+<script>
+  const uploadForm = document.getElementById('uploadForm');
+  const uploadResult = document.getElementById('uploadResult');
+  const setAvBtn = document.getElementById('setAvBtn');
+  const avResult = document.getElementById('avResult');
+  const broadcastBtn = document.getElementById('broadcastBtn');
+  const broadcastResult = document.getElementById('broadcastResult');
+
+  uploadForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(uploadForm);
+    const res = await fetch('/upload-clients', { method: 'POST', body: formData });
+    const data = await res.json();
+    uploadResult.textContent = JSON.stringify(data, null, 2);
+  });
+
+  setAvBtn.addEventListener('click', async () => {
+    const availabilityText = document.getElementById('availabilityText').value;
+    const res = await fetch('/set-availability', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ availabilityText })
+    });
+    const data = await res.json();
+    avResult.textContent = JSON.stringify(data, null, 2);
+  });
+
+  broadcastBtn.addEventListener('click', async () => {
+    const res = await fetch('/broadcast', { method: 'POST' });
+    const data = await res.json();
+    broadcastResult.textContent = JSON.stringify(data, null, 2);
+  });
+</script>
+</body>
+</html>
