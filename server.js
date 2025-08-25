@@ -1,7 +1,6 @@
 // server.js
 // Prudential WhatsApp Scheduler Bot
 // Tech: Node.js, Express, Twilio WhatsApp, ExcelJS, Multer
-// Single-file implementation for simplicity with a minimal HTML UI
 
 require('dotenv').config();
 const express = require('express');
@@ -15,19 +14,17 @@ const { Twilio } = require('twilio');
 // phone-digits -> { confirmed:boolean, pending:boolean, notified:boolean, rowIndices:number[] }
 let statusByDigits = new Map();
 
-
-// ---------------------- Config ----------------------
+// ---------------------- App ----------------------
 const app = express();
-app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.urlencoded({ extended: true })); // Twilio posts x-www-form-urlencoded
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const uploadDir = path.join(DATA_DIR, 'uploads');
 const exportDir = path.join(DATA_DIR, 'exports');
-
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-if (!fs.existsSync(exportDir)) fs.mkdirSync(exportDir);
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+if (!fs.existsSync(exportDir)) fs.mkdirSync(exportDir, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -35,12 +32,12 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Twilio
+// ---------------------- Twilio ----------------------
 const {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
-  TWILIO_WHATSAPP_NUMBER, // e.g., 'whatsapp:+14155238886' (Twilio sandbox) or your WABA number
-  AGENT_DISPLAY_NAME // optional, e.g., 'Chiam from Prudential'
+  TWILIO_WHATSAPP_NUMBER, // e.g., 'whatsapp:+14155238886'
+  AGENT_DISPLAY_NAME
 } = process.env;
 
 let twilioClient = null;
@@ -48,89 +45,65 @@ if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
   twilioClient = new Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 }
 
-// ---------------------- In-memory State ----------------------
-/**
- * availabilitySlots: Array of {
- *   id: string,              // unique
- *   start: Date,
- *   end: Date,
- *   label: string,           // human-friendly label
- *   booked: boolean,
- *   bookedBy?: string        // WhatsApp number 'whatsapp:+65...'
- * }
- */
-let availabilitySlots = [];
-
-/**
- * excelState: {
- *   filePath: string,
- *   workbook: ExcelJS.Workbook,
- *   sheet: ExcelJS.Worksheet,
- *   headerMap: { [headerName: string]: number } // column index by header name
- * }
- */
-let excelState = null;
-
-/**
- * clientsByWa: Map from whatsapp:+number -> { name, phone }
- */
-let clientsByWa = new Map();
+// ---------------------- State ----------------------
+let availabilitySlots = [];   // [{id,start,end,label,booked,bookedBy}]
+let excelState = null;        // { filePath, workbook, sheet, headerMap }
+let clientsByWa = new Map();  // 'whatsapp:+65...' -> { name, phone, rowIndex, status, lastNotified }
 
 // ---------------------- Helpers ----------------------
-function pad2(n) { return String(n).padStart(2, '0'); }
+const pad2 = n => String(n).padStart(2, '0');
+
+function phoneDigitsOnly(v) {
+  return (v || '').toString().replace(/[^\d]/g, '');
+}
+
+function waFormat(numberRaw) {
+  const digits = phoneDigitsOnly(numberRaw);
+  if (!digits) return null;
+  const withCC = digits.startsWith('65') ? `+${digits}` : `+65${digits}`;
+  return `whatsapp:${withCC}`;
+}
 
 function parseAvailabilityLine(line) {
-  // Accept formats like:
-  // 25 Aug 1-5pm
-  // 26 Aug 9am-12pm
-  // 26 Aug 2-7pm
   const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
-  const raw = line.trim().replace(/\s+/g, ' ');
+  const raw = (line || '').trim().replace(/\s+/g, ' ');
   if (!raw) return null;
 
-  // Extract parts: <day> <Mon> <range>
   const m = raw.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s+(.*)$/);
   if (!m) return null;
   const day = parseInt(m[1], 10);
-  const monStr = m[2].toLowerCase().slice(0,3);
-  const monIdx = months.indexOf(monStr);
+  const monIdx = months.indexOf(m[2].toLowerCase().slice(0,3));
   if (monIdx < 0) return null;
+
   const rangeStr = m[3].toLowerCase();
+  const rm = rangeStr.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+  if (!rm) return null;
 
-  // startHour[-endHour][am/pm]
-  let rangeMatch = rangeStr.match(/^(\d{1,2})(?:\:(\d{2}))?\s*(am|pm)?\s*[-–]\s*(\d{1,2})(?:\:(\d{2}))?\s*(am|pm)?$/);
-  if (!rangeMatch) return null;
-
-  let [_, sh, sm, sMer, eh, em, eMer] = rangeMatch;
+  let [_, sh, sm, sMer, eh, em, eMer] = rm;
   sm = sm || '00';
   em = em || '00';
-
-  // If only one meridian present, use it for both; otherwise respect each
   if (!sMer && eMer) sMer = eMer;
   if (!eMer && sMer) eMer = sMer;
 
   let startH = parseInt(sh, 10);
-  let endH = parseInt(eh, 10);
+  let endH   = parseInt(eh, 10);
   const startM = parseInt(sm, 10);
-  const endM = parseInt(em, 10);
+  const endM   = parseInt(em, 10);
 
-  function to24(h, mer) {
-    if (!mer) return h; // assume 24h
+  const to24 = (h, mer) => {
+    if (!mer) return h;
     if (mer === 'am') return h === 12 ? 0 : h;
     return h === 12 ? 12 : h + 12;
-  }
-
+  };
   startH = to24(startH, sMer);
-  endH = to24(endH, eMer);
+  endH   = to24(endH, eMer);
 
-  const now = new Date();
-  const year = now.getFullYear();
-
+  const year = new Date().getFullYear();
   const start = new Date(year, monIdx, day, startH, startM);
   const end   = new Date(year, monIdx, day, endH, endM);
   if (end <= start) end.setHours(end.getHours() + 1);
 
-  return { day, monIdx, start, end };
+  return { start, end };
 }
 
 function humanSlotLabel(d1, d2) {
@@ -143,7 +116,7 @@ function humanSlotLabel(d1, d2) {
     let mer = 'am';
     if (h === 0) { h = 12; mer = 'am'; }
     else if (h === 12) { mer = 'pm'; }
-    else if (h > 12) { h = h - 12; mer = 'pm'; }
+    else if (h > 12) { h -= 12; mer = 'pm'; }
     const mm = date.getMinutes();
     return mm ? `${h}:${pad2(mm)}${mer}` : `${h}${mer}`;
   }
@@ -168,7 +141,7 @@ function expandToHourlySlots(start, end) {
   while (cursor < end) {
     const next = new Date(cursor);
     next.setHours(next.getHours() + 1);
-    if (next > end) break; // no partial hour
+    if (next > end) break;
     slots.push({ start: new Date(cursor), end: new Date(next) });
     cursor = next;
   }
@@ -176,111 +149,14 @@ function expandToHourlySlots(start, end) {
 }
 
 function regenerateSlotIds() {
-  availabilitySlots.forEach((s, idx) => s.id = `S${idx+1}`);
+  availabilitySlots.forEach((s, idx) => { s.id = `S${idx + 1}`; });
 }
 
 function listSlotsForMessage() {
   const lines = availabilitySlots
     .filter(s => !s.booked)
-    .map((s, i) => `${i+1}) ${s.label}`);
+    .map((s, i) => `${i + 1}) ${s.label}`);
   return lines.length ? lines.join('\n') : '(All slots have been booked)';
-}
-
-
-
-// JS fixed version of waFormat (override previous if typo)
-function waFormat(numberRaw) {
-  const digits = (numberRaw || '').toString().replace(/[^\d]/g, '');
-  if (!digits) return null;
-  const withCC = digits.startsWith('65') ? `+${digits}` : `+65${digits}`;
-  return `whatsapp:${withCC}`;
-}
-
-
-async function loadExcel(filePath) {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
-  const sheet = workbook.worksheets[0];
-  if (!sheet) throw new Error('Excel has no sheets');
-
-  // 1) Ensure required headers exist (append any missing)
-  const requiredHeaders = [
-    'Client Name', 'Contact Number', 'Booked Date', 'Booked Time', 'Status', 'Last Notified'
-  ];
-
-  const headerRow = sheet.getRow(1);
-  const existing = (headerRow.values || []).map(v => (typeof v === 'string' ? v.trim() : v));
-
-  if (!existing || existing.length <= 1) {
-    // Empty/invalid header row: write all required headers
-    headerRow.values = [
-      , // 1-based indexing
-      'Client Name', 'Contact Number', 'Booked Date', 'Booked Time', 'Status', 'Last Notified'
-    ];
-    headerRow.commit();
-  } else {
-    // Normalize and append missing headers
-    const headers = [];
-    for (let i = 1; i <= headerRow.cellCount; i++) {
-      const val = headerRow.getCell(i).value;
-      headers.push(typeof val === 'string' ? val.trim() : String(val || ''));
-    }
-    requiredHeaders.forEach(h => { if (!headers.includes(h)) headers.push(h); });
-    headerRow.values = [, ...headers];
-    headerRow.commit();
-  }
-
-  // 2) Build headerMap after header row is finalized
-  const headerMap = {};
-  for (let i = 1; i <= headerRow.cellCount; i++) {
-    const v = headerRow.getCell(i).value;
-    if (v) headerMap[String(v).trim()] = i;
-  }
-
-  // 3) Initialize missing Status to "Pending"
-  const statusIdx = headerMap['Status'];
-  for (let r = 2; r <= sheet.rowCount; r++) {
-    const row = sheet.getRow(r);
-    const statusCell = row.getCell(statusIdx);
-    if (!statusCell.value) {
-      statusCell.value = 'Pending';
-      row.commit();
-    }
-  }
-
-  // 4) Ensure "Last Notified" column exists for all rows (blank by default)
-  const lnIdx = headerMap['Last Notified'];
-  for (let r = 2; r <= sheet.rowCount; r++) {
-    const row = sheet.getRow(r);
-    const c = row.getCell(lnIdx);
-    if (c.value === undefined || c.value === null) {
-      c.value = ''; // leave blank until a message is sent
-      row.commit();
-    }
-  }
-
-  // Persist any fixes
-  await workbook.xlsx.writeFile(filePath);
-  return { workbook, sheet, headerMap };
-}
-
-
-async function saveExcel() {
-  if (!excelState) return;
-  await excelState.workbook.xlsx.writeFile(excelState.filePath);
-}
-
-function findRowByPhone(phoneDigitsRaw) {
-  const sheet = excelState.sheet;
-  const cIdx = excelState.headerMap['Contact Number'];
-  const phoneDigits = (phoneDigitsRaw || '').replace(/[^\d]/g, '');
-  for (let r = 2; r <= sheet.rowCount; r++) {
-    const row = sheet.getRow(r);
-    const val = (row.getCell(cIdx).value || '').toString();
-    const digits = val.replace(/[^\d]/g, '');
-    if (digits && phoneDigits && digits.endsWith(phoneDigits)) return row;
-  }
-  return null;
 }
 
 async function sendWa(to, body) {
@@ -292,12 +168,80 @@ async function sendWa(to, body) {
   });
 }
 
+// ---------------------- Excel ----------------------
+async function loadExcel(filePath) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
+  const sheet = workbook.worksheets[0];
+  if (!sheet) throw new Error('Excel has no sheets');
+
+  const requiredHeaders = [
+    'Client Name', 'Contact Number', 'Booked Date', 'Booked Time', 'Status', 'Last Notified'
+  ];
+
+  const headerRow = sheet.getRow(1);
+  const existing = (headerRow.values || []).map(v => (typeof v === 'string' ? v.trim() : v));
+
+  if (!existing || existing.length <= 1) {
+    headerRow.values = [, ...requiredHeaders]; // 1-based indexing
+    headerRow.commit();
+  } else {
+    const headers = [];
+    for (let i = 1; i <= headerRow.cellCount; i++) {
+      const val = headerRow.getCell(i).value;
+      headers.push(typeof val === 'string' ? val.trim() : String(val || ''));
+    }
+    requiredHeaders.forEach(h => { if (!headers.includes(h)) headers.push(h); });
+    headerRow.values = [, ...headers];
+    headerRow.commit();
+  }
+
+  // Build headerMap AFTER committing headers
+  const headerMap = {};
+  for (let i = 1; i <= headerRow.cellCount; i++) {
+    const v = headerRow.getCell(i).value;
+    if (v) headerMap[String(v).trim()] = i;
+  }
+
+  // IMPORTANT: Do NOT auto-set Status to "Pending" here.
+  // You want Pending to mean "already contacted", so mark it yourself or during broadcast.
+
+  // Ensure "Last Notified" exists on all rows (leave blank)
+  const lnIdx = headerMap['Last Notified'];
+  for (let r = 2; r <= sheet.rowCount; r++) {
+    const row = sheet.getRow(r);
+    const c = row.getCell(lnIdx);
+    if (c.value === undefined || c.value === null) { c.value = ''; row.commit(); }
+  }
+
+  await workbook.xlsx.writeFile(filePath);
+  return { workbook, sheet, headerMap };
+}
+
+async function saveExcel() {
+  if (!excelState) return;
+  await excelState.workbook.xlsx.writeFile(excelState.filePath);
+}
+
+function findRowByPhone(phoneDigitsRaw) {
+  const sheet = excelState.sheet;
+  const cIdx = excelState.headerMap['Contact Number'];
+  const phoneDigits = phoneDigitsOnly(phoneDigitsRaw);
+  for (let r = 2; r <= sheet.rowCount; r++) {
+    const row = sheet.getRow(r);
+    const val = (row.getCell(cIdx).value || '').toString();
+    const digits = phoneDigitsOnly(val);
+    if (digits && phoneDigits && digits.endsWith(phoneDigits)) return row;
+  }
+  return null;
+}
+
 // ---------------------- Routes ----------------------
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 1) Upload Excel of clients
+// Upload Excel and build in-memory maps
 app.post('/upload-clients', upload.single('file'), async (req, res) => {
   try {
     const filePath = req.file.path;
@@ -312,7 +256,6 @@ app.post('/upload-clients', upload.single('file'), async (req, res) => {
     const statusIdx = headerMap['Status'];
     const lnIdx = headerMap['Last Notified'];
 
-    // Build clientsByWa (for inbound mapping) AND statusByDigits (for broadcast decisions)
     for (let r = 2; r <= sheet.rowCount; r++) {
       const row = sheet.getRow(r);
       const name = (row.getCell(nameIdx).value || '').toString().trim();
@@ -323,12 +266,10 @@ app.post('/upload-clients', upload.single('file'), async (req, res) => {
       const digits = phoneDigitsOnly(phoneRaw);
 
       if (wa) {
-        // for inbound matching (keyed by WA string)
         clientsByWa.set(wa, { name, phone: phoneRaw, rowIndex: r, status, lastNotified });
       }
 
       if (digits) {
-        // aggregate by phone digits
         let agg = statusByDigits.get(digits);
         if (!agg) agg = { confirmed: false, pending: false, notified: false, rowIndices: [] };
         if (status === 'confirmed') agg.confirmed = true;
@@ -346,11 +287,9 @@ app.post('/upload-clients', upload.single('file'), async (req, res) => {
   }
 });
 
-
-
-// 2) Set availability (text lines). Example body: { availabilityText: "25 Aug 1-5pm\n26 Aug 2-7pm" }
+// Set availability
 app.post('/set-availability', (req, res) => {
-  const { availabilityText } = req.body;
+  const { availabilityText } = req.body || {};
   if (!availabilityText) return res.status(400).json({ ok:false, error:'availabilityText is required' });
 
   const lines = availabilityText.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
@@ -360,9 +299,9 @@ app.post('/set-availability', (req, res) => {
     const parsed = parseAvailabilityLine(line);
     if (!parsed) continue;
     const hourly = expandToHourlySlots(parsed.start, parsed.end);
-    hourly.forEach(h => {
+    for (const h of hourly) {
       availabilitySlots.push({ id: '', start: h.start, end: h.end, label: humanSlotLabel(h.start, h.end), booked: false });
-    });
+    }
   }
 
   availabilitySlots.sort((a,b) => a.start - b.start);
@@ -371,7 +310,7 @@ app.post('/set-availability', (req, res) => {
   res.json({ ok:true, totalSlots: availabilitySlots.length, slots: availabilitySlots.map(s => s.label) });
 });
 
-// 3) Broadcast availability to all clients (WhatsApp)
+// Broadcast (skip phones that are Pending or Confirmed on ANY row)
 app.post('/broadcast', async (req, res) => {
   try {
     if (!excelState) return res.status(400).json({ ok:false, error:'Upload an Excel first' });
@@ -379,13 +318,10 @@ app.post('/broadcast', async (req, res) => {
 
     const agentName = AGENT_DISPLAY_NAME || 'Your Prudential Agent';
     const slotsText = listSlotsForMessage();
-
-    // Optional override: /broadcast?force=true to ignore skips
     const force = (req.query.force || '').toString().toLowerCase() === 'true';
 
-    // Build a toSend list based on aggregated phone status
     const toSend = [];
-    const usedDigits = new Set(); // ensure 1 message max per phone
+    const usedDigits = new Set();
 
     for (const [wa, client] of clientsByWa.entries()) {
       const digits = phoneDigitsOnly(client.phone);
@@ -393,8 +329,8 @@ app.post('/broadcast', async (req, res) => {
 
       const agg = statusByDigits.get(digits) || { confirmed: false, pending: false, notified: false, rowIndices: [] };
 
-      // Skip if ANY row with this phone is already Confirmed or Pending
-      if (!force && (agg.confirmed || agg.pending)) {
+      // Skip if any row has Pending or Confirmed
+      if (!force && (agg.pending || agg.confirmed)) {
         usedDigits.add(digits);
         continue;
       }
@@ -412,9 +348,6 @@ app.post('/broadcast', async (req, res) => {
       });
     }
 
-    // Take a snapshot of the current open slots for stable numbering (optional if you already added persistence)
-    // lastBroadcastOrder = availabilitySlots.filter(s => !s.booked).map(s => s.id); saveState();
-
     const whenISO = new Date().toISOString();
 
     const tasks = toSend.map(async ({ wa, digits, client, rowIndices }) => {
@@ -425,11 +358,11 @@ app.post('/broadcast', async (req, res) => {
 
       await sendWa(wa, body);
 
-      // Mark Last Notified on ALL rows with this phone (keeps duplicates in sync)
+      // Mark Last Notified on all rows for this phone
       for (const r of rowIndices) {
         const row = excelState.sheet.getRow(r);
         row.getCell(excelState.headerMap['Last Notified']).value = whenISO;
-        // If you want to also mark Status as 'Pending' upon first outreach, uncomment below:
+        // Optional: mark blank Status to 'Pending' so next broadcasts skip them automatically
         // const sIdx = excelState.headerMap['Status'];
         // const current = (row.getCell(sIdx).value || '').toString().trim().toLowerCase();
         // if (!current) row.getCell(sIdx).value = 'Pending';
@@ -447,27 +380,24 @@ app.post('/broadcast', async (req, res) => {
   }
 });
 
-
-// 4) Twilio inbound webhook for WhatsApp replies
-// Configure Twilio to POST to: https://<your-domain>/whatsapp/inbound
+// Inbound webhook
 app.post('/whatsapp/inbound', async (req, res) => {
   try {
-    const from = req.body.From; // 'whatsapp:+65...'
+    const from = req.body.From;
     const body = (req.body.Body || '').toString().trim();
 
-    // Acknowledge to Twilio quickly
     res.status(200).send('OK');
 
     if (!from || !clientsByWa.has(from)) {
-      return; // Unknown sender
+      return; // unknown sender
     }
 
-    const choiceMatch = body.match(/(\d{1,3})/);
-    if (!choiceMatch) {
+    const m = body.match(/(\d{1,3})/);
+    if (!m) {
       await sendWa(from, 'Please reply with the number of your preferred slot (e.g., 2).');
       return;
     }
-    const idx = parseInt(choiceMatch[1], 10) - 1;
+    const idx = parseInt(m[1], 10) - 1;
     if (isNaN(idx) || idx < 0) {
       await sendWa(from, 'Invalid slot number. Please try again.');
       return;
@@ -478,12 +408,13 @@ app.post('/whatsapp/inbound', async (req, res) => {
       await sendWa(from, 'That slot number is no longer available. Please pick another.');
       return;
     }
-    const slot = openSlots[idx];
 
+    const slot = openSlots[idx];
     if (slot.booked) {
       await sendWa(from, 'Sorry, that slot was just taken. Please choose another number.');
       return;
     }
+
     slot.booked = true;
     slot.bookedBy = from;
 
@@ -491,7 +422,7 @@ app.post('/whatsapp/inbound', async (req, res) => {
     const dateOnly = `${pad2(slot.start.getDate())} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][slot.start.getMonth()]}`;
     const timeLabel = humanSlotLabel(slot.start, slot.end).split(' ').slice(2).join(' ');
 
-    const row = findRowByPhone((client.phone || '').replace(/[^\d]/g, ''));
+    const row = findRowByPhone(client.phone);
     if (row) {
       const { headerMap } = excelState;
       row.getCell(headerMap['Booked Date']).value = dateOnly;
@@ -501,13 +432,16 @@ app.post('/whatsapp/inbound', async (req, res) => {
       await saveExcel();
     }
 
-    await sendWa(from, `Booked ✅: ${humanSlotLabel(slot.start, slot.end)}.\nThank you! We will contact you as soon as possible!.`);
+    await sendWa(
+      from,
+      `📌 Hi ${client.name}, your appointment is confirmed.\n\n🗓 ${humanSlotLabel(slot.start, slot.end)}\n\n– ${AGENT_DISPLAY_NAME || 'Your Prudential Agent'}`
+    );
   } catch (err) {
     console.error('Inbound handler error:', err);
   }
 });
 
-// 5) Download updated Excel
+// Download latest Excel
 app.get('/download-latest', (req, res) => {
   try {
     if (!excelState) return res.status(400).json({ ok:false, error:'No Excel loaded yet.' });
@@ -520,10 +454,10 @@ app.get('/download-latest', (req, res) => {
   }
 });
 
-// 6) Health for Twilio
+// Health
 app.get('/health', (req, res) => res.json({ ok:true }));
 
-// ---------------------- Start Server ----------------------
+// Start
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
