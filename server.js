@@ -316,7 +316,7 @@ app.post('/broadcast', async (req, res) => {
     if (!excelState) return res.status(400).json({ ok:false, error:'Upload an Excel first' });
     if (!availabilitySlots.length) return res.status(400).json({ ok:false, error:'Set availability first' });
 
-    const agentName = AGENT_DISPLAY_NAME || 'Your Prudential Agent';
+    const agentName = AGENT_DISPLAY_NAME || 'Your Agent';
     const slotsText = listSlotsForMessage();
     const force = (req.query.force || '').toString().toLowerCase() === 'true';
 
@@ -449,7 +449,7 @@ app.post('/whatsapp/inbound', async (req, res) => {
 
     await sendWa(
       from,
-      `📌 Hi ${client.name}, your appointment is confirmed.\n\n🗓 ${humanSlotLabel(slot.start, slot.end)}\n\n– ${AGENT_DISPLAY_NAME || 'Your Prudential Agent'}`
+      `📌 Hi ${client.name}, your appointment is confirmed.\n\n🗓 ${humanSlotLabel(slot.start, slot.end)}\n\n– ${AGENT_DISPLAY_NAME || 'Your Agent'}`
     );
   } catch (err) {
     console.error('Inbound handler error:', err);
