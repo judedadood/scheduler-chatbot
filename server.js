@@ -12,6 +12,10 @@ const fs = require('fs');
 const ExcelJS = require('exceljs');
 const { Twilio } = require('twilio');
 
+// phone-digits -> { confirmed:boolean, pending:boolean, notified:boolean, rowIndices:number[] }
+let statusByDigits = new Map();
+
+
 // ---------------------- Config ----------------------
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -299,36 +303,49 @@ app.post('/upload-clients', upload.single('file'), async (req, res) => {
     const filePath = req.file.path;
     const { workbook, sheet, headerMap } = await loadExcel(filePath);
 
-    // keep a handle to the workbook/sheet/headers for later writes
     excelState = { filePath, workbook, sheet, headerMap };
-
-    // reset in-memory map
     clientsByWa.clear();
+    statusByDigits.clear();
 
-    // column indexes
     const nameIdx  = headerMap['Client Name'];
     const phoneIdx = headerMap['Contact Number'];
+    const statusIdx = headerMap['Status'];
+    const lnIdx = headerMap['Last Notified'];
 
-    // >>> paste your loop here <<<
+    // Build clientsByWa (for inbound mapping) AND statusByDigits (for broadcast decisions)
     for (let r = 2; r <= sheet.rowCount; r++) {
       const row = sheet.getRow(r);
       const name = (row.getCell(nameIdx).value || '').toString().trim();
       const phoneRaw = (row.getCell(phoneIdx).value || '').toString().trim();
       const wa = waFormat(phoneRaw);
-      const status = (row.getCell(headerMap['Status']).value || '').toString().trim();
-      const lastNotified = row.getCell(headerMap['Last Notified']).value;
+      const status = (row.getCell(statusIdx).value || '').toString().trim().toLowerCase();
+      const lastNotified = row.getCell(lnIdx).value;
+      const digits = phoneDigitsOnly(phoneRaw);
 
       if (wa) {
+        // for inbound matching (keyed by WA string)
         clientsByWa.set(wa, { name, phone: phoneRaw, rowIndex: r, status, lastNotified });
+      }
+
+      if (digits) {
+        // aggregate by phone digits
+        let agg = statusByDigits.get(digits);
+        if (!agg) agg = { confirmed: false, pending: false, notified: false, rowIndices: [] };
+        if (status === 'confirmed') agg.confirmed = true;
+        if (status === 'pending')   agg.pending = true;
+        if (lastNotified)           agg.notified = true;
+        agg.rowIndices.push(r);
+        statusByDigits.set(digits, agg);
       }
     }
 
-    return res.json({ ok: true, message: 'Excel loaded', filePath, totalClients: clientsByWa.size });
+    res.json({ ok: true, message: 'Excel loaded', filePath, totalClients: clientsByWa.size });
   } catch (err) {
     console.error(err);
-    return res.status(400).json({ ok: false, error: err.message });
+    res.status(400).json({ ok: false, error: err.message });
   }
 });
+
 
 
 // 2) Set availability (text lines). Example body: { availabilityText: "25 Aug 1-5pm\n26 Aug 2-7pm" }
@@ -363,19 +380,73 @@ app.post('/broadcast', async (req, res) => {
     const agentName = AGENT_DISPLAY_NAME || 'Your Prudential Agent';
     const slotsText = listSlotsForMessage();
 
-    const promises = [];
+    // Optional override: /broadcast?force=true to ignore skips
+    const force = (req.query.force || '').toString().toLowerCase() === 'true';
+
+    // Build a toSend list based on aggregated phone status
+    const toSend = [];
+    const usedDigits = new Set(); // ensure 1 message max per phone
+
     for (const [wa, client] of clientsByWa.entries()) {
-      const body = `Hi ${client.name}, this is ${agentName}.\nHere are the available 1-hour meeting slots:\n\n${slotsText}\n\nReply with the number of your preferred slot (e.g., 2).`;
-      promises.push(sendWa(wa, body));
+      const digits = phoneDigitsOnly(client.phone);
+      if (!digits || usedDigits.has(digits)) continue;
+
+      const agg = statusByDigits.get(digits) || { confirmed: false, pending: false, notified: false, rowIndices: [] };
+
+      // Skip if ANY row with this phone is already Confirmed or Pending
+      if (!force && (agg.confirmed || agg.pending)) {
+        usedDigits.add(digits);
+        continue;
+      }
+
+      usedDigits.add(digits);
+      toSend.push({ wa, digits, client, rowIndices: agg.rowIndices });
     }
 
-    await Promise.all(promises);
-    res.json({ ok:true, sentTo: clientsByWa.size });
+    if (!toSend.length) {
+      return res.json({
+        ok: true,
+        sentTo: 0,
+        skipped: clientsByWa.size,
+        reason: force ? 'No eligible numbers' : 'All numbers have Pending or Confirmed status (or were duplicates).'
+      });
+    }
+
+    // Take a snapshot of the current open slots for stable numbering (optional if you already added persistence)
+    // lastBroadcastOrder = availabilitySlots.filter(s => !s.booked).map(s => s.id); saveState();
+
+    const whenISO = new Date().toISOString();
+
+    const tasks = toSend.map(async ({ wa, digits, client, rowIndices }) => {
+      const body =
+        `Hi ${client.name}, this is ${agentName}.\n` +
+        `Here are my available 1-hour meeting slots:\n\n${slotsText}\n\n` +
+        `Reply with the number of your preferred slot (e.g., 2).`;
+
+      await sendWa(wa, body);
+
+      // Mark Last Notified on ALL rows with this phone (keeps duplicates in sync)
+      for (const r of rowIndices) {
+        const row = excelState.sheet.getRow(r);
+        row.getCell(excelState.headerMap['Last Notified']).value = whenISO;
+        // If you want to also mark Status as 'Pending' upon first outreach, uncomment below:
+        // const sIdx = excelState.headerMap['Status'];
+        // const current = (row.getCell(sIdx).value || '').toString().trim().toLowerCase();
+        // if (!current) row.getCell(sIdx).value = 'Pending';
+        row.commit();
+      }
+    });
+
+    await Promise.all(tasks);
+    await saveExcel();
+
+    res.json({ ok:true, sentTo: toSend.length, skipped: clientsByWa.size - toSend.length });
   } catch (err) {
     console.error(err);
     res.status(500).json({ ok:false, error: err.message });
   }
 });
+
 
 // 4) Twilio inbound webhook for WhatsApp replies
 // Configure Twilio to POST to: https://<your-domain>/whatsapp/inbound
