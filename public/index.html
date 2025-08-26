@@ -21,6 +21,9 @@
     .nav a { color:#fff; text-decoration:none; padding:6px 10px; border-radius:6px; }
     .nav a:hover { background:#1f2937; }
     .brand { font-weight:700; margin-right:8px; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border:1px solid #e5e7eb; padding:8px; text-align:left; }
+    th { background:#f3f4f6; }
   </style>
 </head>
 <body>
@@ -29,10 +32,11 @@
     <span class="brand">WhatsApp Scheduler</span>
     <a href="/">Home</a>
     <a href="/format">Format</a>
+    <a href="/excel">View Excel</a>
   </div>
 
   <h1>WhatsApp Scheduler</h1>
-  <p>Upload your client Excel, paste availability, broadcast slots, and download the updated Excel.</p>
+  <p>Upload your client Excel, paste availability, broadcast slots, and view/download the updated Excel.</p>
 
   <section>
     <h2>1) Upload Clients Excel</h2>
@@ -69,8 +73,8 @@
   </section>
 
   <section>
-    <h2>4) Download Updated Excel</h2>
-    <a href="/download-latest"><button>Download Latest</button></a>
+    <h2>4) View Updated Excel</h2>
+    <a href="/excel"><button>View Updated Excel</button></a>
   </section>
 
 <script>

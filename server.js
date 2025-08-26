@@ -594,3 +594,48 @@ app.get('/format', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'format.html'));
 });
 
+// View page for Excel
+app.get('/excel', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'excel.html'));
+});
+
+// Live Excel preview as JSON
+app.get('/excel-json', (req, res) => {
+  try {
+    if (!excelState) {
+      return res.status(400).json({ ok:false, error:'No Excel loaded yet.' });
+    }
+
+    const sheet = excelState.sheet;
+    const headerRow = sheet.getRow(1);
+
+    // Build headers from row 1
+    const headers = [];
+    for (let c = 1; c <= headerRow.cellCount; c++) {
+      const v = headerRow.getCell(c).value;
+      if (!v) continue;
+      headers.push(String(v).trim());
+    }
+
+    // Build rows
+    const rows = [];
+    for (let r = 2; r <= sheet.rowCount; r++) {
+      const row = sheet.getRow(r);
+      let empty = true;
+      const obj = {};
+      for (let c = 1; c <= headers.length; c++) {
+        const cell = row.getCell(c);
+        const val = (cell.text !== undefined ? cell.text : (cell.value ?? ''));
+        if (val !== '' && String(val).trim() !== '') empty = false;
+        obj[headers[c - 1]] = val;
+      }
+      if (!empty) rows.push(obj);
+    }
+
+    res.json({ ok:true, headers, rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
