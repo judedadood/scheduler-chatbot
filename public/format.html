@@ -1,0 +1,167 @@
+<!-- public/format.html -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Format Templates • Prudential WA Scheduler</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; }
+    .nav { display:flex; gap:16px; align-items:center; padding:12px 16px; background:#111827; color:#fff; }
+    .nav a { color:#fff; text-decoration:none; padding:6px 10px; border-radius:6px; }
+    .nav a:hover { background:#1f2937; }
+    .container { padding:16px; max-width:900px; margin:0 auto; }
+    .row { display:grid; grid-template-columns: 1fr; gap:16px; }
+    textarea { width:100%; min-height:160px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:14px; padding:10px; border:1px solid #e5e7eb; border-radius:8px; }
+    .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; }
+    .actions { display:flex; gap:12px; margin-top:8px; }
+    .btn { padding:8px 12px; border-radius:8px; border:1px solid #d1d5db; background:#111827; color:#fff; cursor:pointer; }
+    .btn.secondary { background:#fff; color:#111827; }
+    .chips { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 0; }
+    .chip { border:1px dashed #d1d5db; padding:4px 8px; border-radius:999px; cursor:pointer; font-size:12px; background:#f9fafb; }
+    pre { background:#f3f4f6; padding:12px; border-radius:8px; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <strong>Prudential WA Scheduler</strong>
+    <a href="/">Home</a>
+    <a href="/format">Format</a>
+  </div>
+
+  <div class="container">
+    <h2>Message Format</h2>
+    <p>Customize the two WhatsApp messages. You can use these placeholders:</p>
+    <ul>
+      <li><code>{{client.name}}</code> – client’s name</li>
+      <li><code>{{slotsText}}</code> – list of available slots (broadcast message only)</li>
+      <li><code>{{slotLabel}}</code> – the selected slot (confirmation message only), e.g. “26 Aug 2–3pm”</li>
+    </ul>
+
+    <div class="row">
+      <div class="card">
+        <h3>Broadcast Message</h3>
+        <div class="chips">
+          <span class="chip" data-insert="{{client.name}}">{{client.name}}</span>
+          <span class="chip" data-insert="{{slotsText}}">{{slotsText}}</span>
+        </div><br>
+        <textarea id="tpl-broadcast" placeholder="Hi {{client.name}}, here are my available 1-hour meeting slots:
+
+{{slotsText}}
+
+Reply with the number of your preferred slot (e.g., 2)."></textarea>
+      </div>
+
+      <div class="card">
+        <h3>Confirmation Message</h3>
+        <div class="chips">
+          <span class="chip" data-insert="{{client.name}}">{{client.name}}</span>
+          <span class="chip" data-insert="{{slotLabel}}">{{slotLabel}}</span>
+        </div><br>
+        <textarea id="tpl-confirm" placeholder="📌 Hi {{client.name}}, your appointment is confirmed.
+
+🗓 {{slotLabel}}
+
+– Your Agent"></textarea>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="save">Save</button>
+        <button class="btn secondary" id="reset">Restore Defaults</button>
+        <span id="state" style="margin-left:8px;"></span>
+      </div>
+
+      <div class="card">
+        <h3>Preview (example data)</h3>
+        <pre id="preview"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const bEl = document.getElementById('tpl-broadcast');
+    const cEl = document.getElementById('tpl-confirm');
+    const stateEl = document.getElementById('state');
+    const previewEl = document.getElementById('preview');
+
+    function insertAtCursor(el, text) {
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      el.focus();
+      el.selectionStart = el.selectionEnd = start + text.length;
+      updatePreview();
+    }
+
+    document.querySelectorAll('.chip').forEach(ch => {
+      ch.addEventListener('click', () => {
+        const text = ch.getAttribute('data-insert');
+        const target = ch.closest('.card').querySelector('textarea');
+        insertAtCursor(target, text);
+      });
+    });
+
+    async function loadTemplates() {
+      const res = await fetch('/templates');
+      const data = await res.json();
+      if (data.ok) {
+        bEl.value = data.templates.broadcast || bEl.placeholder;
+        cEl.value = data.templates.confirm || cEl.placeholder;
+        updatePreview();
+      }
+    }
+
+    async function saveTemplates(reset = false) {
+      const payload = reset
+        ? { broadcast: '', confirm: '' } // server will fall back to defaults
+        : { broadcast: bEl.value, confirm: cEl.value };
+
+      const res = await fetch('/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.ok) {
+        stateEl.textContent = 'Saved ✓';
+        setTimeout(() => stateEl.textContent = '', 1200);
+        bEl.value = data.templates.broadcast;
+        cEl.value = data.templates.confirm;
+        updatePreview();
+      } else {
+        stateEl.textContent = 'Save failed';
+      }
+    }
+
+    function render(tpl, ctx) {
+      return (tpl || '').replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, path) => {
+        const parts = path.split('.');
+        let cur = ctx;
+        for (const p of parts) {
+          if (cur && Object.prototype.hasOwnProperty.call(cur, p)) cur = cur[p];
+          else return `{{${path}}}`;
+        }
+        return (cur ?? `{{${path}}}`).toString();
+      });
+    }
+
+    function updatePreview() {
+      const example = {
+        client: { name: 'John Tan' },
+        slotsText: '1) 26 Aug 2–3pm\n2) 26 Aug 3:30–4:30pm',
+        slotLabel: '26 Aug 2–3pm'
+      };
+      const b = render(bEl.value || bEl.placeholder, example);
+      const c = render(cEl.value || cEl.placeholder, example);
+      previewEl.textContent = `--- Broadcast ---\n${b}\n\n--- Confirm ---\n${c}`;
+    }
+
+    document.getElementById('save').addEventListener('click', () => saveTemplates(false));
+    document.getElementById('reset').addEventListener('click', () => saveTemplates(true));
+    bEl.addEventListener('input', updatePreview);
+    cEl.addEventListener('input', updatePreview);
+
+    loadTemplates();
+  </script>
+</body>
+</html>

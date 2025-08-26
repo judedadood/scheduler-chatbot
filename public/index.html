@@ -15,9 +15,22 @@
     pre { background: #f7f7f7; padding: 12px; border-radius: 8px; overflow: auto; }
     .grid { display:grid; grid-template-columns: 1fr; gap: 12px; }
     @media (min-width: 800px){ .grid { grid-template-columns: 1fr 1fr; } }
+
+    /* Navbar */
+    .nav { display:flex; align-items:center; gap:16px; padding:12px 16px; background:#111827; color:#fff; border-radius:12px; margin-bottom:16px; }
+    .nav a { color:#fff; text-decoration:none; padding:6px 10px; border-radius:6px; }
+    .nav a:hover { background:#1f2937; }
+    .brand { font-weight:700; margin-right:8px; }
   </style>
 </head>
 <body>
+  <!-- NAVBAR -->
+  <div class="nav">
+    <span class="brand">WhatsApp Scheduler</span>
+    <a href="/">Home</a>
+    <a href="/format">Format</a>
+  </div>
+
   <h1>WhatsApp Scheduler</h1>
   <p>Upload your client Excel, paste availability, broadcast slots, and download the updated Excel.</p>
 
@@ -87,7 +100,6 @@
     const data = await res.json();
     avResult.textContent = JSON.stringify(data, null, 2);
   });
-
 
   broadcastBtn.addEventListener('click', async () => {
     const res = await fetch('/broadcast', { method: 'POST' });

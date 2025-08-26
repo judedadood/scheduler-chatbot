@@ -33,6 +33,56 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // ---------------------- Twilio ----------------------
+// ---- Message templates (stored on disk) ----
+const templatesPath = path.join(exportDir, 'templates.json');
+const defaultTemplates = {
+  broadcast:
+    "Hi {{client.name}}, here are my available 1-hour meeting slots:\n\n{{slotsText}}\n\nReply with the number of your preferred slot (e.g., 2).",
+  confirm:
+    "📌 Hi {{client.name}}, your appointment is confirmed.\n\n🗓 {{slotLabel}}\n\n– Your Agent"
+};
+
+function loadTemplates() {
+  try {
+    if (fs.existsSync(templatesPath)) {
+      const raw = JSON.parse(fs.readFileSync(templatesPath, 'utf8'));
+      return {
+        broadcast: typeof raw.broadcast === 'string' && raw.broadcast.trim() ? raw.broadcast : defaultTemplates.broadcast,
+        confirm:   typeof raw.confirm   === 'string' && raw.confirm.trim()   ? raw.confirm   : defaultTemplates.confirm
+      };
+    }
+  } catch (e) {
+    console.error('Failed to load templates:', e.message);
+  }
+  return { ...defaultTemplates };
+}
+
+function saveTemplates(t) {
+  const clean = {
+    broadcast: typeof t.broadcast === 'string' && t.broadcast.trim() ? t.broadcast : defaultTemplates.broadcast,
+    confirm:   typeof t.confirm   === 'string' && t.confirm.trim()   ? t.confirm   : defaultTemplates.confirm
+  };
+  fs.writeFileSync(templatesPath, JSON.stringify(clean, null, 2));
+  return clean;
+}
+
+// simple {{path.to.value}} renderer (supports dot notation)
+function renderTemplate(tpl, data) {
+  return (tpl || '').replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, path) => {
+    const parts = path.split('.');
+    let cur = data;
+    for (const p of parts) {
+      if (cur && Object.prototype.hasOwnProperty.call(cur, p)) cur = cur[p];
+      else return `{{${path}}}`; // leave unknown placeholder as-is
+    }
+    return (cur ?? `{{${path}}}`).toString();
+  });
+}
+
+// load on boot
+let templates = loadTemplates();
+
+
 const {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -387,12 +437,12 @@ app.post('/broadcast', async (req, res) => {
     const whenISO = new Date().toISOString();
 
     const tasks = toSend.map(async ({ wa, digits, client, rowIndices }) => {
-      const body =
-        `Hi ${client.name}, this is ${agentName}.\n` +
-        `Here are my available 1-hour meeting slots:\n\n${slotsText}\n\n` +
-        `Reply with the number of your preferred slot (e.g., 2).`;
-
+      const body = renderTemplate(templates.broadcast, {
+        client: { name: client.name },
+        slotsText // allowed token
+      });
       await sendWa(wa, body);
+
 
       // Mark Last Notified on all rows for this phone
       for (const r of rowIndices) {
@@ -435,15 +485,16 @@ app.post('/broadcast', async (req, res) => {
 app.post('/whatsapp/inbound', async (req, res) => {
   try {
     const from = req.body.From;
-    const body = (req.body.Body || '').toString().trim();
+    const text = (req.body.Body || '').toString().trim();
 
+    // Acknowledge Twilio immediately
     res.status(200).send('OK');
 
-    if (!from || !clientsByWa.has(from)) {
-      return; // unknown sender
-    }
+    // Only handle replies from numbers in the uploaded Excel
+    if (!from || !clientsByWa.has(from)) return;
 
-    const m = body.match(/(\d{1,3})/);
+    // Expect a numeric choice (1-based)
+    const m = text.match(/(\d{1,3})/);
     if (!m) {
       await sendWa(from, 'Please reply with the number of your preferred slot (e.g., 2).');
       return;
@@ -454,6 +505,7 @@ app.post('/whatsapp/inbound', async (req, res) => {
       return;
     }
 
+    // Map to the current list of open (unbooked) slots
     const openSlots = availabilitySlots.filter(s => !s.booked);
     if (idx >= openSlots.length) {
       await sendWa(from, 'That slot number is no longer available. Please pick another.');
@@ -466,9 +518,11 @@ app.post('/whatsapp/inbound', async (req, res) => {
       return;
     }
 
+    // Book it
     slot.booked = true;
     slot.bookedBy = from;
 
+    // Update Excel row
     const client = clientsByWa.get(from);
     const dateOnly = `${pad2(slot.start.getDate())} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][slot.start.getMonth()]}`;
     const timeLabel = humanSlotLabel(slot.start, slot.end).split(' ').slice(2).join(' ');
@@ -483,14 +537,18 @@ app.post('/whatsapp/inbound', async (req, res) => {
       await saveExcel();
     }
 
-    await sendWa(
-      from,
-      `📌 Hi ${client.name}, your appointment is confirmed.\n\n🗓 ${humanSlotLabel(slot.start, slot.end)}\n\n– ${AGENT_DISPLAY_NAME || 'Your Agent'}`
-    );
+    // ✅ Use your editable confirm template
+    const slotLabel = humanSlotLabel(slot.start, slot.end);
+    const body = renderTemplate(templates.confirm, {
+      client: { name: client.name },
+      slotLabel
+    });
+    await sendWa(from, body);
   } catch (err) {
     console.error('Inbound handler error:', err);
   }
 });
+
 
 // Download latest Excel
 app.get('/download-latest', (req, res) => {
@@ -513,3 +571,26 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
+
+// Get current templates
+app.get('/templates', (req, res) => {
+  res.json({ ok: true, templates });
+});
+
+// Update templates
+app.post('/templates', (req, res) => {
+  try {
+    const { broadcast, confirm } = req.body || {};
+    templates = saveTemplates({ broadcast, confirm });
+    res.json({ ok: true, templates });
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+// Serve the Format page
+app.get('/format', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'format.html'));
+});
+
