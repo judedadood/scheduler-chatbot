@@ -1,32 +1,36 @@
-<!-- public/format.html -->
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Format Templates • Prudential WA Scheduler</title>
+  <title>Format Templates • WA Scheduler</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; }
-    .nav { display:flex; gap:16px; align-items:center; padding:12px 16px; background:#111827; color:#fff; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:24px; }
+    /* Navbar (unified across pages) */
+    .nav { display:flex; align-items:center; gap:16px; padding:12px 16px; background:#111827; color:#fff; border-radius:12px; margin-bottom:16px; }
     .nav a { color:#fff; text-decoration:none; padding:6px 10px; border-radius:6px; }
     .nav a:hover { background:#1f2937; }
-    .container { padding:16px; max-width:900px; margin:0 auto; }
+    .brand { font-weight:700; margin-right:8px; }
+
+    .container { max-width:900px; margin:0 auto; }
     .row { display:grid; grid-template-columns: 1fr; gap:16px; }
-    textarea { width:100%; min-height:160px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:14px; padding:10px; border:1px solid #e5e7eb; border-radius:8px; }
     .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; }
-    .actions { display:flex; gap:12px; margin-top:8px; }
+    textarea { width:100%; min-height:160px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:14px; padding:10px; border:1px solid #e5e7eb; border-radius:8px; }
+    .actions { display:flex; gap:12px; margin-top:8px; align-items:center; }
     .btn { padding:8px 12px; border-radius:8px; border:1px solid #d1d5db; background:#111827; color:#fff; cursor:pointer; }
     .btn.secondary { background:#fff; color:#111827; }
     .chips { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 0; }
     .chip { border:1px dashed #d1d5db; padding:4px 8px; border-radius:999px; cursor:pointer; font-size:12px; background:#f9fafb; }
-    pre { background:#f3f4f6; padding:12px; border-radius:8px; }
+    pre { background:#f3f4f6; padding:12px; border-radius:8px; white-space:pre-wrap; }
   </style>
 </head>
 <body>
+  <!-- Unified Navbar -->
   <div class="nav">
-    <strong>Prudential WA Scheduler</strong>
+    <span class="brand">WhatsApp Scheduler</span>
     <a href="/">Home</a>
     <a href="/format">Format</a>
+    <a href="/excel">View Excel</a>
   </div>
 
   <div class="container">
@@ -65,7 +69,7 @@ Reply with the number of your preferred slot (e.g., 2)."></textarea>
 – Your Agent"></textarea>
       </div>
 
-      <div class="actions">
+      <div class="actions card">
         <button class="btn" id="save">Save</button>
         <button class="btn secondary" id="reset">Restore Defaults</button>
         <span id="state" style="margin-left:8px;"></span>
@@ -113,7 +117,7 @@ Reply with the number of your preferred slot (e.g., 2)."></textarea>
 
     async function saveTemplates(reset = false) {
       const payload = reset
-        ? { broadcast: '', confirm: '' } // server will fall back to defaults
+        ? { broadcast: '', confirm: '' } // server falls back to defaults
         : { broadcast: bEl.value, confirm: cEl.value };
 
       const res = await fetch('/templates', {

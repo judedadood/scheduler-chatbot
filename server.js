@@ -10,6 +10,8 @@ const path = require('path');
 const fs = require('fs');
 const ExcelJS = require('exceljs');
 const { Twilio } = require('twilio');
+const INVALID_INPUT_MSG = 'Please reply with the number of your preferred slot (e.g., 2).';
+
 
 // phone-digits -> { confirmed:boolean, pending:boolean, notified:boolean, rowIndices:number[] }
 let statusByDigits = new Map();
@@ -493,28 +495,35 @@ app.post('/whatsapp/inbound', async (req, res) => {
     // Only handle replies from numbers in the uploaded Excel
     if (!from || !clientsByWa.has(from)) return;
 
+    // If user types keywords like "menu/slots/options/list", re-show available slots
+    if (/\b(menu|slots|options|list)\b/i.test(text)) {
+      const slotsText = listSlotsForMessage();
+      await sendWa(from, `Here are the available slots:\n\n${slotsText}\n\n${INVALID_INPUT_MSG}`);
+      return;
+    }
+
     // Expect a numeric choice (1-based)
-    const m = text.match(/(\d{1,3})/);
+    const m = text.match(/\b(\d{1,3})\b/);
     if (!m) {
-      await sendWa(from, 'Please reply with the number of your preferred slot (e.g., 2).');
+      await sendWa(from, INVALID_INPUT_MSG);
       return;
     }
     const idx = parseInt(m[1], 10) - 1;
-    if (isNaN(idx) || idx < 0) {
-      await sendWa(from, 'Invalid slot number. Please try again.');
+    if (!Number.isInteger(idx) || idx < 0) {
+      await sendWa(from, INVALID_INPUT_MSG);
       return;
     }
 
     // Map to the current list of open (unbooked) slots
     const openSlots = availabilitySlots.filter(s => !s.booked);
     if (idx >= openSlots.length) {
-      await sendWa(from, 'That slot number is no longer available. Please pick another.');
+      await sendWa(from, `That slot number is no longer available.\n\n${INVALID_INPUT_MSG}`);
       return;
     }
 
     const slot = openSlots[idx];
     if (slot.booked) {
-      await sendWa(from, 'Sorry, that slot was just taken. Please choose another number.');
+      await sendWa(from, `Sorry, that slot was just taken.\n\n${INVALID_INPUT_MSG}`);
       return;
     }
 
@@ -537,7 +546,7 @@ app.post('/whatsapp/inbound', async (req, res) => {
       await saveExcel();
     }
 
-    // ✅ Use your editable confirm template
+    // Send confirmation using editable template
     const slotLabel = humanSlotLabel(slot.start, slot.end);
     const body = renderTemplate(templates.confirm, {
       client: { name: client.name },
@@ -548,6 +557,7 @@ app.post('/whatsapp/inbound', async (req, res) => {
     console.error('Inbound handler error:', err);
   }
 });
+
 
 
 // Download latest Excel
