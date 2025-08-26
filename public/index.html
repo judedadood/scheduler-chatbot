@@ -37,6 +37,14 @@
     <label>Availability Text (one per line)</label>
     <textarea id="availabilityText" rows="6" placeholder="25 Aug 1-5pm&#10;26 Aug 2-7pm"></textarea>
     <br>
+    <label>Buffer between meetings</label>
+    <select id="buffer">
+      <option value="0" selected>0 min</option>
+      <option value="30">30 min</option>
+      <option value="60">60 min</option>
+    </select>
+    <br><br>
+
     <button id="setAvBtn">Set Availability</button>
     <pre id="avResult"></pre>
   </section>
@@ -70,14 +78,16 @@
 
   setAvBtn.addEventListener('click', async () => {
     const availabilityText = document.getElementById('availabilityText').value;
+    const bufferMinutes = document.getElementById('buffer').value; // "0" | "30" | "60"
     const res = await fetch('/set-availability', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ availabilityText })
+      body: JSON.stringify({ availabilityText, bufferMinutes })
     });
     const data = await res.json();
     avResult.textContent = JSON.stringify(data, null, 2);
   });
+
 
   broadcastBtn.addEventListener('click', async () => {
     const res = await fetch('/broadcast', { method: 'POST' });

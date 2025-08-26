@@ -51,6 +51,22 @@ let excelState = null;        // { filePath, workbook, sheet, headerMap }
 let clientsByWa = new Map();  // 'whatsapp:+65...' -> { name, phone, rowIndex, status, lastNotified }
 
 // ---------------------- Helpers ----------------------
+function expandToBufferedSlots(start, end, slotMins = 60, bufferMins = 0) {
+  const slots = [];
+  const step = slotMins + bufferMins; // e.g., 60 + 30 = 90 minutes between starts
+  let cursor = new Date(start);
+
+  while (cursor < end) {
+    const slotEnd = new Date(cursor);
+    slotEnd.setMinutes(slotEnd.getMinutes() + slotMins);
+    if (slotEnd > end) break; // don’t create partial slot past the end
+    slots.push({ start: new Date(cursor), end: slotEnd });
+    cursor.setMinutes(cursor.getMinutes() + step); // jump by slot + buffer
+  }
+  return slots;
+}
+
+
 const pad2 = n => String(n).padStart(2, '0');
 
 function phoneDigitsOnly(v) {
@@ -289,8 +305,14 @@ app.post('/upload-clients', upload.single('file'), async (req, res) => {
 
 // Set availability
 app.post('/set-availability', (req, res) => {
-  const { availabilityText } = req.body || {};
+  const { availabilityText, bufferMinutes } = req.body || {};
   if (!availabilityText) return res.status(400).json({ ok:false, error:'availabilityText is required' });
+
+  // validate buffer: allow 0 (default), 30, 60
+  const allowed = new Set([0, 30, 60, '0', '30', '60']);
+  const bufRaw = bufferMinutes ?? 0;
+  const buf = parseInt(bufRaw, 10);
+  const buffer = allowed.has(bufRaw) && [0,30,60].includes(buf) ? buf : 0;
 
   const lines = availabilityText.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   availabilitySlots = [];
@@ -298,17 +320,31 @@ app.post('/set-availability', (req, res) => {
   for (const line of lines) {
     const parsed = parseAvailabilityLine(line);
     if (!parsed) continue;
-    const hourly = expandToHourlySlots(parsed.start, parsed.end);
-    for (const h of hourly) {
-      availabilitySlots.push({ id: '', start: h.start, end: h.end, label: humanSlotLabel(h.start, h.end), booked: false });
+
+    // slot duration fixed at 60 mins; buffer variable (0/30/60)
+    const slots = expandToBufferedSlots(parsed.start, parsed.end, 60, buffer);
+    for (const h of slots) {
+      availabilitySlots.push({
+        id: '',
+        start: h.start,
+        end: h.end,
+        label: humanSlotLabel(h.start, h.end),
+        booked: false
+      });
     }
   }
 
   availabilitySlots.sort((a,b) => a.start - b.start);
   regenerateSlotIds();
 
-  res.json({ ok:true, totalSlots: availabilitySlots.length, slots: availabilitySlots.map(s => s.label) });
+  res.json({
+    ok:true,
+    bufferMinutes: buffer,
+    totalSlots: availabilitySlots.length,
+    slots: availabilitySlots.map(s => s.label)
+  });
 });
+
 
 // Broadcast (skip phones that are Pending or Confirmed on ANY row)
 app.post('/broadcast', async (req, res) => {
