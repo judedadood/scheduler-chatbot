@@ -493,21 +493,26 @@ app.post('/whatsapp/inbound', async (req, res) => {
     res.status(200).send('OK');
 
     // Only handle replies from numbers in the uploaded Excel
-    if (!from || !clientsByWa.has(from)) return;
+    if (!from || !clientsByWa.has(from)) {
+      // Optional: reply anyway so user gets feedback
+      // await sendWa(from, 'Hi! I couldn’t match your number to my client list.');
+      return;
+    }
 
-    // If user types keywords like "menu/slots/options/list", re-show available slots
+    // If the user asks for the menu, re-show available slots
     if (/\b(menu|slots|options|list)\b/i.test(text)) {
       const slotsText = listSlotsForMessage();
       await sendWa(from, `Here are the available slots:\n\n${slotsText}\n\n${INVALID_INPUT_MSG}`);
       return;
     }
 
-    // Expect a numeric choice (1-based)
+    // Expect a numeric choice (strict 1–3 digits) anywhere in the text
     const m = text.match(/\b(\d{1,3})\b/);
     if (!m) {
       await sendWa(from, INVALID_INPUT_MSG);
       return;
     }
+
     const idx = parseInt(m[1], 10) - 1;
     if (!Number.isInteger(idx) || idx < 0) {
       await sendWa(from, INVALID_INPUT_MSG);
@@ -522,7 +527,7 @@ app.post('/whatsapp/inbound', async (req, res) => {
     }
 
     const slot = openSlots[idx];
-    if (slot.booked) {
+    if (!slot || slot.booked) {
       await sendWa(from, `Sorry, that slot was just taken.\n\n${INVALID_INPUT_MSG}`);
       return;
     }
@@ -557,6 +562,7 @@ app.post('/whatsapp/inbound', async (req, res) => {
     console.error('Inbound handler error:', err);
   }
 });
+
 
 
 
