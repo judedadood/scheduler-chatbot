@@ -544,6 +544,25 @@ app.post('/whatsapp/inbound', async (req, res) => {
       return;
     }
 
+    // 🔒 Prevent multiple bookings from the same client (already Confirmed)
+    {
+      const client = clientsByWa.get(from);
+      const row = findRowByPhone(client.phone);
+      if (row) {
+        const h = excelState.headerMap;
+        const status = String(row.getCell(h['Status']).value || '').trim().toLowerCase();
+        const bd = row.getCell(h['Booked Date']);
+        const bt = row.getCell(h['Booked Time']);
+        const bookedDate = (bd?.text ?? bd?.value ?? '').toString();
+        const bookedTime = (bt?.text ?? bt?.value ?? '').toString();
+        if (status === 'confirmed' && (bookedDate || bookedTime)) {
+          const summary = `${bookedDate}${bookedDate && bookedTime ? ' ' : ''}${bookedTime}`;
+          await sendWa(from, `You already have a confirmed appointment${summary ? `: ${summary}` : ''}.`);
+          return;
+        }
+      }
+    }
+
     // If the user asks for the menu, re-show available slots
     if (/\b(menu|slots|options|list)\b/i.test(text)) {
       const slotsText = listSlotsForMessage();
@@ -566,7 +585,6 @@ app.post('/whatsapp/inbound', async (req, res) => {
 
     // Resolve the chosen slot using the frozen broadcast order (stable numbering)
     let slot = null;
-
     if (lastBroadcastOrder && lastBroadcastOrder.length >= (idx + 1)) {
       const slotId = lastBroadcastOrder[idx]; // idx is 0-based
       slot = availabilitySlots.find(s => s.id === slotId);
@@ -586,7 +604,6 @@ app.post('/whatsapp/inbound', async (req, res) => {
       await sendWa(from, `Sorry, that slot was just taken.\n\n${INVALID_INPUT_MSG}`);
       return;
     }
-
 
     // Book it
     slot.booked = true;
@@ -618,6 +635,7 @@ app.post('/whatsapp/inbound', async (req, res) => {
     console.error('Inbound handler error:', err);
   }
 });
+
 
 
 
