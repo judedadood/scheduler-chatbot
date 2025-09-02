@@ -65,6 +65,18 @@ function toAbsoluteUrl(relPath, req) {
   return base ? `${base}${relPath}` : relPath; // if base missing, relPath is still usable in browser
 }
 
+function listSlotsForMessageStable() {
+  if (!lastBroadcastOrder || !lastBroadcastOrder.length) {
+    // fallback to current list (reindexed) ONLY if no snapshot
+    return listSlotsForMessage();
+  }
+  const lines = [];
+  lastBroadcastOrder.forEach((slotId, i) => {
+    const s = availabilitySlots.find(x => x.id === slotId);
+    if (s && !s.booked) lines.push(`${i + 1}) ${s.label}`); // keep original number
+  });
+  return lines.length ? lines.join('\n') : '(All slots have been booked)';
+}
 
 
 // ---------------------- Twilio ----------------------
@@ -85,6 +97,7 @@ function loadTemplates() {
       return {
         broadcast: typeof raw.broadcast === 'string' && raw.broadcast.trim() ? raw.broadcast : defaultTemplates.broadcast,
         confirm:   typeof raw.confirm   === 'string' && raw.confirm.trim()   ? raw.confirm   : defaultTemplates.confirm,
+        followup:  typeof raw.followup  === 'string' && raw.followup.trim()  ? raw.followup  : defaultTemplates.followup,
         broadcastImageUrl: typeof raw.broadcastImageUrl === 'string' ? raw.broadcastImageUrl : ""
       };
     }
@@ -95,11 +108,11 @@ function loadTemplates() {
 }
 
 function saveTemplates(t) {
-  // keep previous image URL if not provided
   const prev = fs.existsSync(templatesPath) ? JSON.parse(fs.readFileSync(templatesPath, 'utf8')) : {};
   const clean = {
     broadcast: typeof t.broadcast === 'string' && t.broadcast.trim() ? t.broadcast : (prev.broadcast || defaultTemplates.broadcast),
     confirm:   typeof t.confirm   === 'string' && t.confirm.trim()   ? t.confirm   : (prev.confirm   || defaultTemplates.confirm),
+    followup:  typeof t.followup  === 'string' && t.followup.trim()  ? t.followup  : (prev.followup  || defaultTemplates.followup),
     broadcastImageUrl: typeof t.broadcastImageUrl === 'string'
       ? t.broadcastImageUrl
       : (prev.broadcastImageUrl || "")
@@ -624,6 +637,15 @@ app.post('/whatsapp/inbound', async (req, res) => {
       await saveExcel();
     }
 
+    //  keep follow-up from targeting this client again
+    {
+      const digits = phoneDigitsOnly(client.phone);
+      const agg = statusByDigits.get(digits) || { confirmed:false, pending:false, notified:false, rowIndices:[] };
+      agg.confirmed = true;
+      agg.pending = false;
+      statusByDigits.set(digits, agg);
+    }
+
     // Send confirmation using editable template
     const slotLabel = humanSlotLabel(slot.start, slot.end);
     const body = renderTemplate(templates.confirm, {
@@ -670,8 +692,8 @@ app.get('/templates', (req, res) => {
 // Update templates
 app.post('/templates', (req, res) => {
   try {
-    const { broadcast, confirm, broadcastImageUrl } = req.body || {};
-    templates = saveTemplates({ broadcast, confirm, broadcastImageUrl });
+    const { broadcast, confirm, followup, broadcastImageUrl } = req.body || {};
+    templates = saveTemplates({ broadcast, confirm, followup, broadcastImageUrl });
     res.json({ ok: true, templates });
   } catch (e) {
     console.error(e);
@@ -752,5 +774,82 @@ app.post('/clear-broadcast-image', (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+app.get('/followup', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'followup.html'));
+});
+
+
+app.get('/slots-stable-text', (req, res) => {
+  try {
+    const slotsText = listSlotsForMessageStable();
+    res.json({ ok:true, slotsText });
+  } catch (e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+
+app.post('/followup-send', async (req, res) => {
+  try {
+    if (!excelState) return res.status(400).json({ ok:false, error:'Upload an Excel first' });
+    if (!availabilitySlots.length) return res.status(400).json({ ok:false, error:'Set availability first' });
+    if (!lastBroadcastOrder || !lastBroadcastOrder.length) {
+      return res.status(400).json({ ok:false, error:'No prior broadcast snapshot. Broadcast once before sending follow-ups.' });
+    }
+
+    const slotsText = listSlotsForMessageStable();
+    if (/^\(All slots have been booked\)$/.test(slotsText)) {
+      return res.json({ ok:true, sentTo: 0, skipped: 0, reason: 'No remaining slots.' });
+    }
+
+    const toSend = [];
+    const usedDigits = new Set();
+
+    for (const [wa, client] of clientsByWa.entries()) {
+      const digits = phoneDigitsOnly(client.phone);
+      if (!digits || usedDigits.has(digits)) continue;
+      const agg = statusByDigits.get(digits) || { confirmed:false, pending:false, notified:false, rowIndices:[] };
+
+      // Only send follow-up to Pending and not Confirmed
+      if (agg.pending && !agg.confirmed) {
+        usedDigits.add(digits);
+        toSend.push({ wa, digits, client, rowIndices: agg.rowIndices });
+      }
+    }
+
+    if (!toSend.length) {
+      return res.json({ ok:true, sentTo: 0, skipped: clientsByWa.size, reason: 'No Pending clients to follow-up.' });
+    }
+
+    const whenISO = new Date().toISOString();
+
+    const tasks = toSend.map(async ({ wa, digits, client, rowIndices }) => {
+      const body = renderTemplate(templates.followup, {
+        client: { name: client.name },
+        slotsText
+      });
+
+      await sendWa(wa, body); // no image for follow-up (by design)
+
+      // Update Last Notified timestamp; keep Status as-is (Pending)
+      for (const r of rowIndices) {
+        const row = excelState.sheet.getRow(r);
+        row.getCell(excelState.headerMap['Last Notified']).value = whenISO;
+        row.commit();
+      }
+
+      // aggregator stays Pending (unchanged here)
+    });
+
+    await Promise.all(tasks);
+    await saveExcel();
+
+    res.json({ ok:true, sentTo: toSend.length, skipped: clientsByWa.size - toSend.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok:false, error: err.message });
   }
 });
