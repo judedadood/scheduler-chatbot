@@ -34,6 +34,39 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+
+
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://scheduler-chatbot.onrender.com'; 
+
+// Public media folder so Twilio can fetch images
+const imageDir = path.join(__dirname, 'public', 'media');
+if (!fs.existsSync(imageDir)) fs.mkdirSync(imageDir, { recursive: true });
+
+// Separate multer for images
+const imageStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, imageDir),
+  filename: (req, file, cb) =>
+    cb(null, `broadcast_${Date.now()}${path.extname(file.originalname).toLowerCase()}`)
+});
+const imageUpload = multer({
+  storage: imageStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (req, file, cb) => {
+    const ok = /^image\/(png|jpe?g|gif|webp)$/i.test(file.mimetype);
+    cb(null, ok);
+  }
+});
+
+// Helper to make absolute URL for Twilio (requires PUBLIC_BASE_URL or falls back to request)
+function toAbsoluteUrl(relPath, req) {
+  if (!relPath) return '';
+  if (/^https?:\/\//i.test(relPath)) return relPath;
+  const base = PUBLIC_BASE_URL || (req ? `${req.protocol}://${req.get('host')}` : '');
+  return base ? `${base}${relPath}` : relPath; // if base missing, relPath is still usable in browser
+}
+
+
+
 // ---------------------- Twilio ----------------------
 // ---- Message templates (stored on disk) ----
 const templatesPath = path.join(exportDir, 'templates.json');
@@ -41,7 +74,8 @@ const defaultTemplates = {
   broadcast:
     "Hi {{client.name}}, here are my available 1-hour meeting slots:\n\n{{slotsText}}\n\nReply with the number of your preferred slot (e.g., 2).",
   confirm:
-    "📌 Hi {{client.name}}, your appointment is confirmed.\n\n🗓 {{slotLabel}}\n\n– Your Agent"
+    "📌 Hi {{client.name}}, your appointment is confirmed.\n\n🗓 {{slotLabel}}\n\n– Your Agent",
+  broadcastImageUrl: "" // optional image URL (absolute) sent with broadcast
 };
 
 function loadTemplates() {
@@ -50,7 +84,8 @@ function loadTemplates() {
       const raw = JSON.parse(fs.readFileSync(templatesPath, 'utf8'));
       return {
         broadcast: typeof raw.broadcast === 'string' && raw.broadcast.trim() ? raw.broadcast : defaultTemplates.broadcast,
-        confirm:   typeof raw.confirm   === 'string' && raw.confirm.trim()   ? raw.confirm   : defaultTemplates.confirm
+        confirm:   typeof raw.confirm   === 'string' && raw.confirm.trim()   ? raw.confirm   : defaultTemplates.confirm,
+        broadcastImageUrl: typeof raw.broadcastImageUrl === 'string' ? raw.broadcastImageUrl : ""
       };
     }
   } catch (e) {
@@ -60,13 +95,19 @@ function loadTemplates() {
 }
 
 function saveTemplates(t) {
+  // keep previous image URL if not provided
+  const prev = fs.existsSync(templatesPath) ? JSON.parse(fs.readFileSync(templatesPath, 'utf8')) : {};
   const clean = {
-    broadcast: typeof t.broadcast === 'string' && t.broadcast.trim() ? t.broadcast : defaultTemplates.broadcast,
-    confirm:   typeof t.confirm   === 'string' && t.confirm.trim()   ? t.confirm   : defaultTemplates.confirm
+    broadcast: typeof t.broadcast === 'string' && t.broadcast.trim() ? t.broadcast : (prev.broadcast || defaultTemplates.broadcast),
+    confirm:   typeof t.confirm   === 'string' && t.confirm.trim()   ? t.confirm   : (prev.confirm   || defaultTemplates.confirm),
+    broadcastImageUrl: typeof t.broadcastImageUrl === 'string'
+      ? t.broadcastImageUrl
+      : (prev.broadcastImageUrl || "")
   };
   fs.writeFileSync(templatesPath, JSON.stringify(clean, null, 2));
   return clean;
 }
+
 
 // simple {{path.to.value}} renderer (supports dot notation)
 function renderTemplate(tpl, data) {
@@ -227,14 +268,13 @@ function listSlotsForMessage() {
   return lines.length ? lines.join('\n') : '(All slots have been booked)';
 }
 
-async function sendWa(to, body) {
+async function sendWa(to, body, mediaUrls) {
   if (!twilioClient) throw new Error('Twilio client not configured.');
-  return twilioClient.messages.create({
-    from: TWILIO_WHATSAPP_NUMBER,
-    to,
-    body
-  });
+  const payload = { from: TWILIO_WHATSAPP_NUMBER, to, body };
+  if (Array.isArray(mediaUrls) && mediaUrls.length) payload.mediaUrl = mediaUrls;
+  return twilioClient.messages.create(payload);
 }
+
 
 // ---------------------- Excel ----------------------
 async function loadExcel(filePath) {
@@ -439,39 +479,37 @@ app.post('/broadcast', async (req, res) => {
     const whenISO = new Date().toISOString();
 
     const tasks = toSend.map(async ({ wa, digits, client, rowIndices }) => {
-      const body = renderTemplate(templates.broadcast, {
-        client: { name: client.name },
-        slotsText // allowed token
-      });
-      await sendWa(wa, body);
-
-
-      // Mark Last Notified on all rows for this phone
-      for (const r of rowIndices) {
-        const row = excelState.sheet.getRow(r);
-        row.getCell(excelState.headerMap['Last Notified']).value = whenISO;
-        const sIdx = excelState.headerMap['Status'];
-        for (const r of rowIndices) {
-          const row = excelState.sheet.getRow(r);
-          row.getCell(excelState.headerMap['Last Notified']).value = whenISO;
-
-          const cur = (row.getCell(sIdx).value || '').toString().trim().toLowerCase();
-          if (cur !== 'confirmed') {
-            row.getCell(sIdx).value = 'Pending';
-          }
-          row.commit();
-        }
-
-        // keep in-memory aggregator in sync so future broadcasts skip immediately
-        const agg = statusByDigits.get(digits) || { confirmed: false, pending: false, notified: false, rowIndices: [] };
-        agg.pending = true;
-        agg.notified = true;
-        statusByDigits.set(digits, agg);
-        client.status = 'pending';
-
-        row.commit();
-      }
+    const body = renderTemplate(templates.broadcast, {
+      client: { name: client.name },
+      slotsText
     });
+
+    // attach image if set in templates
+    const media = (templates.broadcastImageUrl && templates.broadcastImageUrl.trim())
+      ? [ templates.broadcastImageUrl.trim() ]
+      : undefined;
+
+    await sendWa(wa, body, media);
+
+    // mark Last Notified + set Status=Pending (unless already Confirmed)
+    const whenISO = new Date().toISOString();
+    const sIdx = excelState.headerMap['Status'];
+    for (const r of rowIndices) {
+      const row = excelState.sheet.getRow(r);
+      row.getCell(excelState.headerMap['Last Notified']).value = whenISO;
+      const cur = (row.getCell(sIdx).value || '').toString().trim().toLowerCase();
+      if (cur !== 'confirmed') row.getCell(sIdx).value = 'Pending';
+      row.commit();
+    }
+
+    // sync in-memory aggregator
+    const agg = statusByDigits.get(digits) || { confirmed:false, pending:false, notified:false, rowIndices:[] };
+    agg.pending = true;
+    agg.notified = true;
+    statusByDigits.set(digits, agg);
+    client.status = 'pending';
+  });
+
 
     await Promise.all(tasks);
     await saveExcel();
@@ -596,14 +634,15 @@ app.get('/templates', (req, res) => {
 // Update templates
 app.post('/templates', (req, res) => {
   try {
-    const { broadcast, confirm } = req.body || {};
-    templates = saveTemplates({ broadcast, confirm });
+    const { broadcast, confirm, broadcastImageUrl } = req.body || {};
+    templates = saveTemplates({ broadcast, confirm, broadcastImageUrl });
     res.json({ ok: true, templates });
   } catch (e) {
     console.error(e);
     res.status(400).json({ ok: false, error: e.message });
   }
 });
+
 
 // Serve the Format page
 app.get('/format', (req, res) => {
@@ -655,3 +694,27 @@ app.get('/excel-json', (req, res) => {
   }
 });
 
+// Upload broadcast image (multipart field name: "image")
+app.post('/upload-broadcast-image', imageUpload.single('image'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ ok:false, error: 'Please upload a PNG/JPG/GIF/WEBP image ≤ 5MB.' });
+    const relUrl = `/media/${req.file.filename}`; // publicly served by /public
+    const absUrl = toAbsoluteUrl(relUrl, req);
+    templates = saveTemplates({ broadcast: templates.broadcast, confirm: templates.confirm, broadcastImageUrl: absUrl });
+    res.json({ ok:true, url: absUrl });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// Clear broadcast image (does not delete file; just unlinks from template)
+app.post('/clear-broadcast-image', (req, res) => {
+  try {
+    templates = saveTemplates({ broadcast: templates.broadcast, confirm: templates.confirm, broadcastImageUrl: "" });
+    res.json({ ok:true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});

@@ -35,11 +35,31 @@
 
   <div class="container">
     <h2>Message Format</h2>
+
+    <!-- NEW: Broadcast Image -->
+    <div class="card" style="margin-bottom:16px;">
+      <h3>Broadcast Header Image (optional)</h3>
+      <p>This image will be sent together with your broadcast message.</p>
+      <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+        <img id="imgPreview" src="" alt="No image" style="max-width:280px; max-height:180px; border:1px solid #e5e7eb; border-radius:8px; object-fit:contain; background:#fafafa;">
+        <div>
+          <form id="imgForm">
+            <input type="file" id="imgFile" name="image" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp">
+            <div class="actions" style="margin-top:8px;">
+              <button class="btn" type="submit">Upload Image</button>
+              <button class="btn secondary" id="clearImg" type="button">Remove Image</button>
+            </div>
+          </form>
+          <div id="imgState" style="margin-top:8px; color:#6b7280;"></div>
+        </div>
+      </div>
+    </div>
+
     <p>Customize the two WhatsApp messages. You can use these placeholders:</p>
     <ul>
       <li><code>{{client.name}}</code> – client’s name</li>
-      <li><code>{{slotsText}}</code> – list of available slots (broadcast message only)</li>
-      <li><code>{{slotLabel}}</code> – the selected slot (confirmation message only), e.g. “26 Aug 2–3pm”</li>
+      <li><code>{{slotsText}}</code> – list of available slots (broadcast only)</li>
+      <li><code>{{slotLabel}}</code> – the chosen slot (confirmation only), e.g. “26 Aug 2–3pm”</li>
     </ul>
 
     <div class="row">
@@ -88,6 +108,12 @@ Reply with the number of your preferred slot (e.g., 2)."></textarea>
     const stateEl = document.getElementById('state');
     const previewEl = document.getElementById('preview');
 
+    const imgPreview = document.getElementById('imgPreview');
+    const imgForm = document.getElementById('imgForm');
+    const imgFile = document.getElementById('imgFile');
+    const clearImgBtn = document.getElementById('clearImg');
+    const imgState = document.getElementById('imgState');
+
     function insertAtCursor(el, text) {
       const start = el.selectionStart ?? el.value.length;
       const end = el.selectionEnd ?? el.value.length;
@@ -111,13 +137,20 @@ Reply with the number of your preferred slot (e.g., 2)."></textarea>
       if (data.ok) {
         bEl.value = data.templates.broadcast || bEl.placeholder;
         cEl.value = data.templates.confirm || cEl.placeholder;
+        if (data.templates.broadcastImageUrl) {
+          imgPreview.src = data.templates.broadcastImageUrl;
+          imgPreview.style.opacity = '1';
+        } else {
+          imgPreview.removeAttribute('src');
+          imgPreview.style.opacity = '0.3';
+        }
         updatePreview();
       }
     }
 
     async function saveTemplates(reset = false) {
       const payload = reset
-        ? { broadcast: '', confirm: '' } // server falls back to defaults
+        ? { broadcast: '', confirm: '' } // server keeps/clears image separately
         : { broadcast: bEl.value, confirm: cEl.value };
 
       const res = await fetch('/templates', {
@@ -165,7 +198,38 @@ Reply with the number of your preferred slot (e.g., 2)."></textarea>
     bEl.addEventListener('input', updatePreview);
     cEl.addEventListener('input', updatePreview);
 
+    // ---- Image upload handling
+    imgForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!imgFile.files.length) return;
+      imgState.textContent = 'Uploading...';
+      const fd = new FormData();
+      fd.append('image', imgFile.files[0]);
+      const res = await fetch('/upload-broadcast-image', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.ok) {
+        imgPreview.src = data.url;
+        imgPreview.style.opacity = '1';
+        imgState.textContent = 'Image saved ✓';
+      } else {
+        imgState.textContent = data.error || 'Upload failed';
+      }
+    });
+
+    clearImgBtn.addEventListener('click', async () => {
+      imgState.textContent = 'Clearing...';
+      const res = await fetch('/clear-broadcast-image', { method:'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        imgPreview.removeAttribute('src');
+        imgPreview.style.opacity = '0.3';
+        imgState.textContent = 'Image removed ✓';
+      } else {
+        imgState.textContent = data.error || 'Failed to remove';
+      }
+    });
+
     loadTemplates();
   </script>
 </body>
-</html>
+
