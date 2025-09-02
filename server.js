@@ -142,6 +142,7 @@ if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
 let availabilitySlots = [];   // [{id,start,end,label,booked,bookedBy}]
 let excelState = null;        // { filePath, workbook, sheet, headerMap }
 let clientsByWa = new Map();  // 'whatsapp:+65...' -> { name, phone, rowIndex, status, lastNotified }
+let lastBroadcastOrder = [];  // <-- stable slot IDs in the order shown to clients
 
 // ---------------------- Helpers ----------------------
 function expandToBufferedSlots(start, end, slotMins = 60, bufferMins = 0) {
@@ -428,6 +429,7 @@ app.post('/set-availability', (req, res) => {
 
   availabilitySlots.sort((a,b) => a.start - b.start);
   regenerateSlotIds();
+  lastBroadcastOrder = [];
 
   res.json({
     ok:true,
@@ -475,6 +477,11 @@ app.post('/broadcast', async (req, res) => {
         reason: force ? 'No eligible numbers' : 'All numbers have Pending or Confirmed status (or were duplicates).'
       });
     }
+
+    //  Freeze the numbering exactly as shown in the message
+    lastBroadcastOrder = availabilitySlots
+      .filter(s => !s.booked)
+      .map(s => s.id);
 
     const whenISO = new Date().toISOString();
 
@@ -557,18 +564,29 @@ app.post('/whatsapp/inbound', async (req, res) => {
       return;
     }
 
-    // Map to the current list of open (unbooked) slots
-    const openSlots = availabilitySlots.filter(s => !s.booked);
-    if (idx >= openSlots.length) {
-      await sendWa(from, `That slot number is no longer available.\n\n${INVALID_INPUT_MSG}`);
-      return;
+    // Resolve the chosen slot using the frozen broadcast order (stable numbering)
+    let slot = null;
+
+    if (lastBroadcastOrder && lastBroadcastOrder.length >= (idx + 1)) {
+      const slotId = lastBroadcastOrder[idx]; // idx is 0-based
+      slot = availabilitySlots.find(s => s.id === slotId);
     }
 
-    const slot = openSlots[idx];
+    // Fallback: current open slots (only if snapshot missing)
+    if (!slot) {
+      const openSlots = availabilitySlots.filter(s => !s.booked);
+      if (idx >= openSlots.length) {
+        await sendWa(from, `That slot number is no longer available.\n\n${INVALID_INPUT_MSG}`);
+        return;
+      }
+      slot = openSlots[idx];
+    }
+
     if (!slot || slot.booked) {
       await sendWa(from, `Sorry, that slot was just taken.\n\n${INVALID_INPUT_MSG}`);
       return;
     }
+
 
     // Book it
     slot.booked = true;
