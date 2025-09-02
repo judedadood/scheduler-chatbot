@@ -78,6 +78,19 @@ function listSlotsForMessageStable() {
   return lines.length ? lines.join('\n') : '(All slots have been booked)';
 }
 
+const SGT_TZ = 'Asia/Singapore';
+function nowSGTString() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: SGT_TZ,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  return `${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute}:${map.second} SGT`;
+}
+
+
 
 // ---------------------- Twilio ----------------------
 // ---- Message templates (stored on disk) ----
@@ -496,7 +509,7 @@ app.post('/broadcast', async (req, res) => {
       .filter(s => !s.booked)
       .map(s => s.id);
 
-    const whenISO = new Date().toISOString();
+    const whenSGT = nowSGTString();
 
     const tasks = toSend.map(async ({ wa, digits, client, rowIndices }) => {
     const body = renderTemplate(templates.broadcast, {
@@ -512,11 +525,11 @@ app.post('/broadcast', async (req, res) => {
     await sendWa(wa, body, media);
 
     // mark Last Notified + set Status=Pending (unless already Confirmed)
-    const whenISO = new Date().toISOString();
+    const whenSGT = nowSGTString();
     const sIdx = excelState.headerMap['Status'];
     for (const r of rowIndices) {
       const row = excelState.sheet.getRow(r);
-      row.getCell(excelState.headerMap['Last Notified']).value = whenISO;
+      row.getCell(excelState.headerMap['Last Notified']).value = whenSGT;
       const cur = (row.getCell(sIdx).value || '').toString().trim().toLowerCase();
       if (cur !== 'confirmed') row.getCell(sIdx).value = 'Pending';
       row.commit();
@@ -824,7 +837,7 @@ app.post('/followup-send', async (req, res) => {
       return res.json({ ok:true, sentTo: 0, skipped: clientsByWa.size, reason: 'No Pending clients to follow-up.' });
     }
 
-    const whenISO = new Date().toISOString();
+    const whenSGT = nowSGTString();
 
     const tasks = toSend.map(async ({ wa, digits, client, rowIndices }) => {
       const body = renderTemplate(templates.followup, {
@@ -837,7 +850,7 @@ app.post('/followup-send', async (req, res) => {
       // Update Last Notified timestamp; keep Status as-is (Pending)
       for (const r of rowIndices) {
         const row = excelState.sheet.getRow(r);
-        row.getCell(excelState.headerMap['Last Notified']).value = whenISO;
+        row.getCell(excelState.headerMap['Last Notified']).value = whenSGT;
         row.commit();
       }
 
