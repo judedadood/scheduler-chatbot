@@ -2,12 +2,12 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Format •  WA Scheduler</title>
+  <title>Format Templates • Prudential WA Scheduler</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root{ --line:#e5e7eb; --muted:#6b7280; }
     html,body{ margin:0; background:#f9fafb; color:#111827; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-    .container{ max-width: 980px; margin:0 auto; padding: 12px 16px 40px; }
+    .container{ max-width: 1100px; margin:0 auto; padding: 12px 16px 40px; }
 
     .nav{
       position: sticky; top: 0; z-index: 1000;
@@ -32,13 +32,29 @@
     }
     @media (min-width: 721px){ .nav .menu-btn{ display:none; } }
 
-    .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
-    textarea { width:100%; min-height:160px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:14px; padding:10px; border:1px solid var(--line); border-radius:8px; }
-    .chips { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 0; }
-    .chip { border:1px dashed var(--line); padding:4px 8px; border-radius:999px; cursor:pointer; font-size:12px; background:#fff; }
-    .btn { padding:8px 12px; border-radius:8px; border:1px solid #d1d5db; background:#111827; color:#fff; cursor:pointer; }
-    .btn.secondary { background:#fff; color:#111827; }
-    pre{ background:#f3f4f6; padding:12px; border-radius:8px; overflow:auto; }
+    /* Buttons / helpers */
+    .btn{ padding:10px 14px; border-radius:10px; border:1px solid #111827; background:#111827; color:#fff; cursor:pointer; }
+    .btn.secondary{ background:#fff; color:#111827; }
+    .muted{ color: var(--muted); }
+
+    /* Cards / layout */
+    .card{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin:12px 0; }
+    .row{ display:grid; grid-template-columns: 1fr; gap:16px; }
+    @media (min-width: 900px){ .row{ grid-template-columns: 1fr 1fr; } }
+
+    /* Editors */
+    textarea{
+      width:100%; min-height:160px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size:14px; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff;
+    }
+    .chips{ display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 0; }
+    .chip{ border:1px dashed var(--line); padding:4px 8px; border-radius:999px; cursor:pointer; font-size:12px; background:#fff; }
+
+    pre{ background:#f3f4f6; border:1px solid var(--line); padding:12px; border-radius:8px; overflow:auto; }
+
+    /* Image preview */
+    img.preview{ max-width:240px; max-height:160px; display:none; border:1px solid var(--line); border-radius:8px; }
   </style>
 </head>
 <body>
@@ -55,198 +71,219 @@
     </div>
   </div>
 
-  <div class="card">
-  <h3 style="margin-top:0">Broadcast Image (optional)</h3>
-  <div id="imgRow" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-    <img id="imgPreview" src="" alt="" style="max-width:240px;max-height:160px;display:none;border:1px solid #e5e7eb;border-radius:8px;" />
-    <input id="imgFile" type="file" accept="image/*" />
-    <button class="btn" id="imgUpload">Upload</button>
-    <button class="btn secondary" id="imgRemove">Remove</button>
-    <span id="imgState" class="hint"></span>
-  </div>
-</div>
-
   <div class="container">
     <h2>Message Format</h2>
-    <p class="muted">Placeholders you can use:
-      <code>{{client.name}}</code>,
-      <code>{{slotsText}}</code> (broadcast only),
-      <code>{{slotLabel}}</code> (confirmation only)
+    <p class="muted">
+      Customize the two WhatsApp messages. Placeholders you can use:
+      <code>{{client.name}}</code>, <code>{{slotsText}}</code> (broadcast only), <code>{{slotLabel}}</code> (confirmation only).
     </p>
 
+    <!-- Broadcast Image -->
     <div class="card">
-      <h3>Broadcast Message</h3>
-      <div class="chips">
-        <span class="chip" data-insert="{{client.name}}">{{client.name}}</span>
-        <span class="chip" data-insert="{{slotsText}}">{{slotsText}}</span>
+      <h3 style="margin-top:0">Broadcast Image (optional)</h3>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <img id="imgPreview" class="preview" alt="" />
+        <input id="imgFile" type="file" accept="image/*" />
+        <button class="btn" id="imgUpload" type="button">Upload</button>
+        <button class="btn secondary" id="imgRemove" type="button">Remove</button>
+        <span id="imgState" class="muted"></span>
       </div>
-      <div style="height:6px"></div>
-      <textarea id="tpl-broadcast" placeholder="Hi {{client.name}}, here are my available 1-hour meeting slots:
+      <p class="muted" style="margin-top:8px;">This image will be attached to your broadcast and follow-up messages.</p>
+    </div>
+
+    <div class="row">
+      <div class="card">
+        <h3 style="margin-top:0">Broadcast Message</h3>
+        <div class="chips">
+          <span class="chip" data-insert="{{client.name}}">{{client.name}}</span>
+          <span class="chip" data-insert="{{slotsText}}">{{slotsText}}</span>
+        </div>
+        <div style="height:8px"></div>
+        <textarea id="tplBroadcast" placeholder="Hi {{client.name}}, here are my available 1-hour meeting slots:
 
 {{slotsText}}
 
 Reply with the number of your preferred slot (e.g., 2)."></textarea>
-    </div>
-
-    <div class="card">
-      <h3>Confirmation Message</h3>
-      <div class="chips">
-        <span class="chip" data-insert="{{client.name}}">{{client.name}}</span>
-        <span class="chip" data-insert="{{slotLabel}}">{{slotLabel}}</span>
       </div>
-      <div style="height:6px"></div>
-      <textarea id="tpl-confirm" placeholder="📌 Hi {{client.name}}, your appointment is confirmed.
+
+      <div class="card">
+        <h3 style="margin-top:0">Confirmation Message</h3>
+        <div class="chips">
+          <span class="chip" data-insert="{{client.name}}">{{client.name}}</span>
+          <span class="chip" data-insert="{{slotLabel}}">{{slotLabel}}</span>
+        </div>
+        <div style="height:8px"></div>
+        <textarea id="tplConfirm" placeholder="📌 Hi {{client.name}}, your appointment is confirmed.
 
 🗓 {{slotLabel}}
 
 – Your Agent"></textarea>
+      </div>
     </div>
 
     <div class="card">
-      <button class="btn" id="save">Save</button>
-      <button class="btn secondary" id="reset">Restore Defaults</button>
-      <span id="state" style="margin-left:8px;"></span>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="btn" id="save">Save</button>
+        <button class="btn secondary" id="reset">Restore Defaults</button>
+        <span id="state" class="muted"></span>
+      </div>
     </div>
 
     <div class="card">
-      <h3>Preview (example)</h3>
+      <h3 style="margin-top:0">Preview (example data)</h3>
       <pre id="preview"></pre>
     </div>
   </div>
 
   <script>
-    // Navbar wiring + workspace
-    (function(){
-      const nav   = document.querySelector('[data-nav]');
-      const btn   = document.getElementById('navToggle');
-      const links = document.getElementById('navLinks');
-      function closeMenu(){ nav.classList.remove('open'); btn && btn.setAttribute('aria-expanded','false'); }
-      btn && btn.addEventListener('click', ()=>{ const open = nav.classList.toggle('open'); btn.setAttribute('aria-expanded', open ? 'true':'false'); });
-      links && links.addEventListener('click', (e)=>{ if (e.target.tagName === 'A') closeMenu(); });
-      window.addEventListener('resize', ()=>{ if (window.innerWidth >= 721) closeMenu(); });
+    // Workspace from URL: /w/:ws/format
+    const wsId = (location.pathname.match(/^\/w\/([^/]+)/) || [])[1];
 
-      const parts = location.pathname.split('/').filter(Boolean);
-      if (parts[0] !== 'w' || !parts[1]) { if (location.pathname !== '/workspaces') location.href = '/workspaces'; return; }
-      const ws = parts[1];
-      const setHref = (id, path) => { const el = document.getElementById(id); if (!el) return; el.href = path ? `/w/${ws}/${path}` : `/w/${ws}/`; };
-      setHref('navBrand',''); setHref('navHome',''); setHref('navFormat','format'); setHref('navExcel','excel'); setHref('navFollow','followup');
+    // ----- Navbar wiring -----
+    const nav = document.querySelector('[data-nav]');
+    const navLinks = document.getElementById('navLinks');
+    const navToggle = document.getElementById('navToggle');
 
-      // Templates UI
-      const bEl = document.getElementById('tpl-broadcast');
-      const cEl = document.getElementById('tpl-confirm');
-      const stateEl = document.getElementById('state');
-      const previewEl = document.getElementById('preview');
+    function setNav(){
+      document.getElementById('navBrand').href = `/w/${wsId}/`;
+      document.getElementById('navHome').href   = `/w/${wsId}/`;
+      document.getElementById('navFormat').href = `/w/${wsId}/format`;
+      document.getElementById('navExcel').href  = `/w/${wsId}/excel`;
+      document.getElementById('navFollow').href = `/w/${wsId}/followup`;
+    }
+    setNav();
 
-      function insertAtCursor(el, text){
-        const start = el.selectionStart ?? el.value.length;
-        const end = el.selectionEnd ?? el.value.length;
-        el.value = el.value.slice(0,start) + text + el.value.slice(end);
-        el.focus(); el.selectionStart = el.selectionEnd = start + text.length;
+    // Hamburger toggle
+    navToggle.addEventListener('click', () => {
+      const open = nav.classList.toggle('open');
+      navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    // Close when link clicked
+    navLinks.addEventListener('click', (e) => {
+      if (e.target.tagName === 'A') {
+        nav.classList.remove('open');
+        navToggle.setAttribute('aria-expanded', 'false');
+      }
+    });
+    // Close if clicked outside
+    document.addEventListener('click', (e) => {
+      if (!nav.contains(e.target)) {
+        nav.classList.remove('open');
+        navToggle.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    // ----- Template editor + image -----
+    const bEl = document.getElementById('tplBroadcast');
+    const cEl = document.getElementById('tplConfirm');
+    const stateEl = document.getElementById('state');
+    const previewEl = document.getElementById('preview');
+
+    function insertAtCursor(el, text) {
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      el.focus();
+      el.selectionStart = el.selectionEnd = start + text.length;
+      updatePreview();
+    }
+    document.querySelectorAll('.chip').forEach(ch => {
+      ch.addEventListener('click', () => {
+        const text = ch.getAttribute('data-insert');
+        const ta = ch.closest('.card').querySelector('textarea');
+        insertAtCursor(ta, text);
+      });
+    });
+
+    function render(tpl, ctx) {
+      return (tpl || '').replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, p) => {
+        const parts = p.split('.');
+        let cur = ctx;
+        for (const k of parts) {
+          if (cur && Object.prototype.hasOwnProperty.call(cur, k)) cur = cur[k];
+          else return `{{${p}}}`;
+        }
+        return (cur ?? `{{${p}}}`).toString();
+      });
+    }
+
+    function updatePreview() {
+      const example = {
+        client: { name: 'John Tan' },
+        // Example shows stable numbering with a gap if #2 was taken
+        slotsText: '1) 26 Aug 2–3pm\n3) 26 Aug 4–5pm\n4) 26 Aug 5–6pm',
+        slotLabel: '26 Aug 2–3pm'
+      };
+      const b = render(bEl.value || bEl.placeholder, example);
+      const c = render(cEl.value || cEl.placeholder, example);
+      previewEl.textContent = `--- Broadcast ---\n${b}\n\n--- Confirm ---\n${c}`;
+    }
+
+    async function loadTemplates() {
+      const res = await fetch(`/api/w/${wsId}/templates`);
+      const data = await res.json();
+      if (data.ok) {
+        bEl.value = data.templates.broadcast || bEl.placeholder;
+        cEl.value = data.templates.confirm || cEl.placeholder;
+        setImage(data.templates.broadcastMediaUrl || '');
         updatePreview();
       }
-      document.querySelectorAll('.chip').forEach(ch=>{
-        ch.addEventListener('click', ()=>{
-          const text = ch.getAttribute('data-insert');
-          const target = ch.closest('.card').querySelector('textarea');
-          insertAtCursor(target, text);
-        });
+    }
+
+    async function saveTemplates(reset=false) {
+      const payload = reset ? { broadcast:'', confirm:'' } : { broadcast:bEl.value, confirm:cEl.value };
+      const res = await fetch(`/api/w/${wsId}/templates`, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify(payload)
       });
-
-      function render(tpl, ctx){
-        return (tpl || '').replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, path)=>{
-          const parts = path.split('.'); let cur = ctx;
-          for (const p of parts){ if (cur && Object.prototype.hasOwnProperty.call(cur,p)) cur = cur[p]; else return `{{${path}}}`; }
-          return (cur ?? `{{${path}}}`).toString();
-        });
+      const data = await res.json();
+      if (data.ok) {
+        stateEl.textContent = 'Saved ✓';
+        setTimeout(()=> stateEl.textContent = '', 1200);
+        bEl.value = data.templates.broadcast;
+        cEl.value = data.templates.confirm;
+        updatePreview();
+      } else {
+        stateEl.textContent = data.error || 'Save failed';
       }
-      function updatePreview(){
-        const example = {
-          client:{ name:'John Tan' },
-          slotsText:'1) 26 Aug 2–3pm\n3) 26 Aug 4–5pm\n5) 27 Aug 10–11am',
-          slotLabel:'26 Aug 2–3pm'
-        };
-        const b = render(bEl.value || bEl.placeholder, example);
-        const c = render(cEl.value || cEl.placeholder, example);
-        previewEl.textContent = `--- Broadcast ---\n${b}\n\n--- Confirm ---\n${c}`;
-      }
+    }
 
-      async function loadTemplates(){
-        const res = await fetch(`/api/w/${ws}/templates`);
-        const data = await res.json();
-        if (data.ok){
-          bEl.value = data.templates.broadcast || bEl.placeholder;
-          cEl.value = data.templates.confirm   || cEl.placeholder;
-          updatePreview();
-        }
-      }
-      async function saveTemplates(reset=false){
-        const payload = reset ? { broadcast:'', confirm:'' } : { broadcast: bEl.value, confirm: cEl.value };
-        const res = await fetch(`/api/w/${ws}/templates`,{
-          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (data.ok){
-          stateEl.textContent = 'Saved ✓'; setTimeout(()=> stateEl.textContent='', 1200);
-          bEl.value = data.templates.broadcast; cEl.value = data.templates.confirm; updatePreview();
-        }else{
-          stateEl.textContent = 'Save failed';
-        }
-      }
+    document.getElementById('save').addEventListener('click', ()=>saveTemplates(false));
+    document.getElementById('reset').addEventListener('click', ()=>saveTemplates(true));
+    bEl.addEventListener('input', updatePreview);
+    cEl.addEventListener('input', updatePreview);
 
-      document.getElementById('save').addEventListener('click', ()=> saveTemplates(false));
-      document.getElementById('reset').addEventListener('click', ()=> saveTemplates(true));
-      bEl.addEventListener('input', updatePreview);
-      cEl.addEventListener('input', updatePreview);
-      loadTemplates();
-    })();
+    // Image upload/remove
+    function setImage(url){
+      const img = document.getElementById('imgPreview');
+      const st  = document.getElementById('imgState');
+      if (url) { img.src = url; img.style.display = ''; st.textContent = ''; }
+      else { img.src = ''; img.style.display = 'none'; }
+    }
+    document.getElementById('imgUpload').addEventListener('click', async ()=>{
+      const f = document.getElementById('imgFile').files[0];
+      const st = document.getElementById('imgState');
+      if (!f) { st.textContent = 'Choose an image first.'; return; }
+      st.textContent = 'Uploading…';
+      const fd = new FormData(); fd.append('image', f);
+      const res = await fetch(`/api/w/${wsId}/templates-image`, { method:'POST', body: fd });
+      const data = await res.json();
+      if (!data.ok) { st.textContent = data.error || 'Upload failed'; return; }
+      setImage(data.url);
+      st.textContent = 'Saved ✓'; setTimeout(()=> st.textContent='', 1200);
+    });
+    document.getElementById('imgRemove').addEventListener('click', async ()=>{
+      const st = document.getElementById('imgState');
+      st.textContent = 'Removing…';
+      const res = await fetch(`/api/w/${wsId}/templates-image`, { method:'DELETE' });
+      const data = await res.json();
+      if (!data.ok) { st.textContent = data.error || 'Remove failed'; return; }
+      setImage('');
+      st.textContent = 'Removed ✓'; setTimeout(()=> st.textContent='', 1200);
+    });
 
-    // derive workspace id from /w/:ws/format
-const ws = (location.pathname.match(/^\/w\/([^/]+)/) || [])[1];
-
-// load templates (existing call). After you receive data:
-function setImage(url){
-  const img = document.getElementById('imgPreview');
-  const st  = document.getElementById('imgState');
-  if (url) { img.src = url; img.style.display = ''; st.textContent = ''; }
-  else { img.src = ''; img.style.display = 'none'; }
-}
-
-async function loadTemplates() {
-  const res = await fetch(`/api/w/${ws}/templates`);
-  const data = await res.json();
-  if (data.ok) {
-    bEl.value = data.templates.broadcast || bEl.placeholder;
-    cEl.value = data.templates.confirm || cEl.placeholder;
-    setImage(data.templates.broadcastMediaUrl || '');
-    updatePreview();
-  }
-}
-
-document.getElementById('imgUpload').addEventListener('click', async () => {
-  const f = document.getElementById('imgFile').files[0];
-  const st = document.getElementById('imgState');
-  if (!f) { st.textContent = 'Choose an image first.'; return; }
-  st.textContent = 'Uploading…';
-  const fd = new FormData(); fd.append('image', f);
-  const res = await fetch(`/api/w/${ws}/templates-image`, { method:'POST', body: fd });
-  const data = await res.json();
-  if (!data.ok) { st.textContent = data.error || 'Upload failed'; return; }
-  setImage(data.url);
-  st.textContent = 'Saved ✓';
-  setTimeout(()=> st.textContent='', 1200);
-});
-
-document.getElementById('imgRemove').addEventListener('click', async () => {
-  const st = document.getElementById('imgState');
-  st.textContent = 'Removing…';
-  const res = await fetch(`/api/w/${ws}/templates-image`, { method:'DELETE' });
-  const data = await res.json();
-  if (!data.ok) { st.textContent = data.error || 'Remove failed'; return; }
-  setImage('');
-  st.textContent = 'Removed ✓';
-  setTimeout(()=> st.textContent='', 1200);
-});
-
+    loadTemplates();
   </script>
 </body>
 </html>
