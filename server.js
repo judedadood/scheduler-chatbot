@@ -17,6 +17,8 @@ app.use(bodyParser.urlencoded({ extended: true })); // Twilio posts x-www-form-u
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+
+
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const APP_DATA_DIR = path.join(DATA_DIR, 'appdata'); // where workspaces live
 if (!fs.existsSync(APP_DATA_DIR)) fs.mkdirSync(APP_DATA_DIR, { recursive: true });
@@ -29,6 +31,9 @@ const makeStorage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, `upload_${Date.now()}${path.extname(file.originalname)}`)
 });
 const upload = multer({ storage: makeStorage });
+
+// serve workspace media as absolute URLs
+app.use('/media', express.static(APP_DATA_DIR));
 
 // ---------------------- Twilio ----------------------
 const {
@@ -208,26 +213,32 @@ function loadTemplates(ws) {
     if (fs.existsSync(fp)) {
       const raw = JSON.parse(fs.readFileSync(fp, 'utf8'));
       ws.templates = {
-        broadcast: typeof raw.broadcast === 'string' && raw.broadcast.trim() ? raw.broadcast : defaultTemplates.broadcast,
-        confirm:   typeof raw.confirm   === 'string' && raw.confirm.trim()   ? raw.confirm   : defaultTemplates.confirm
+        broadcast: (raw.broadcast && raw.broadcast.trim()) ? raw.broadcast : defaultTemplates.broadcast,
+        confirm:   (raw.confirm && raw.confirm.trim())     ? raw.confirm   : defaultTemplates.confirm,
+        broadcastMediaUrl: typeof raw.broadcastMediaUrl === 'string' ? raw.broadcastMediaUrl : ''
       };
       return;
     }
   } catch (e) {
     console.error(`Failed to load templates for ${ws.id}:`, e.message);
   }
-  ws.templates = { ...defaultTemplates };
+  ws.templates = { ...defaultTemplates, broadcastMediaUrl: '' };
 }
 
+
 function saveTemplates(ws, t) {
+  const existing = ws.templates || {};
   const clean = {
-    broadcast: typeof t.broadcast === 'string' && t.broadcast.trim() ? t.broadcast : defaultTemplates.broadcast,
-    confirm:   typeof t.confirm   === 'string' && t.confirm.trim()   ? t.confirm   : defaultTemplates.confirm
+    broadcast: (t.broadcast && t.broadcast.trim()) ? t.broadcast : defaultTemplates.broadcast,
+    confirm:   (t.confirm   && t.confirm.trim())   ? t.confirm   : defaultTemplates.confirm,
+    // preserve current image unless explicitly changed elsewhere
+    broadcastMediaUrl: existing.broadcastMediaUrl || ''
   };
   fs.writeFileSync(ws.templatesPath, JSON.stringify(clean, null, 2));
   ws.templates = clean;
   return clean;
 }
+
 
 async function loadExcel(filePath) {
   const workbook = new ExcelJS.Workbook();
@@ -614,7 +625,8 @@ app.post('/api/w/:ws/broadcast', async (req, res) => {
         client: { name: client.name },
         slotsText
       });
-      await sendWa(wa, body);
+      await sendWa(wa, body, ws.templates.broadcastMediaUrl || null);
+
 
       // Mark Last Notified (SGT) and set Status='Pending' if not Confirmed
       const h = ws.excelState.headerMap;
@@ -899,4 +911,54 @@ app.get('/health', (req, res) => res.json({ ok:true }));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
+});
+
+// Upload broadcast image
+app.post('/api/w/:ws/templates-image', upload.single('image'), (req, res) => {
+  const ws = requireWS(req, res); if (!ws) return;
+  try {
+    if (!req.file) return res.status(400).json({ ok:false, error:'No image uploaded' });
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    if (!['.png','.jpg','.jpeg','.gif','.webp'].includes(ext)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ ok:false, error:'Unsupported image type' });
+    }
+    // move into workspace exports
+    const fileName = `broadcast_${Date.now()}${ext}`;
+    const dest = path.join(ws.exportDir, fileName);
+    fs.renameSync(req.file.path, dest);
+
+    // public URL via /media
+    const url = `/media/workspaces/${ws.id}/exports/${fileName}`;
+    ws.templates.broadcastMediaUrl = url;
+    // persist to templates.json
+    const raw = fs.existsSync(ws.templatesPath) ? JSON.parse(fs.readFileSync(ws.templatesPath,'utf8')) : {};
+    raw.broadcast = ws.templates.broadcast || defaultTemplates.broadcast;
+    raw.confirm = ws.templates.confirm || defaultTemplates.confirm;
+    raw.broadcastMediaUrl = url;
+    fs.writeFileSync(ws.templatesPath, JSON.stringify(raw, null, 2));
+
+    res.json({ ok:true, url });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// Remove broadcast image
+app.delete('/api/w/:ws/templates-image', (req, res) => {
+  const ws = requireWS(req, res); if (!ws) return;
+  try {
+    // do not delete the file on disk (optional); just clear the reference
+    ws.templates.broadcastMediaUrl = '';
+    const raw = fs.existsSync(ws.templatesPath) ? JSON.parse(fs.readFileSync(ws.templatesPath,'utf8')) : {};
+    raw.broadcast = ws.templates.broadcast || defaultTemplates.broadcast;
+    raw.confirm   = ws.templates.confirm   || defaultTemplates.confirm;
+    raw.broadcastMediaUrl = '';
+    fs.writeFileSync(ws.templatesPath, JSON.stringify(raw, null, 2));
+    res.json({ ok:true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok:false, error:e.message });
+  }
 });
