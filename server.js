@@ -329,6 +329,31 @@ function findRowByPhone(ws, phoneDigitsRaw) {
   return null;
 }
 
+function refreshStatusForDigits(ws, digits) {
+  if (!ws.excelState) return;
+  const sheet = ws.excelState.sheet;
+  const h = ws.excelState.headerMap;
+
+  let confirmed = false, pending = false, notified = false;
+  const rowIndices = [];
+
+  for (let r = 2; r <= sheet.rowCount; r++) {
+    const row = sheet.getRow(r);
+    const val = (row.getCell(h['Contact Number']).value || '').toString();
+    const d = phoneDigitsOnly(val);
+    if (!d || !digits) continue;
+    if (!d.endsWith(digits)) continue;
+
+    rowIndices.push(r);
+    const st = String(row.getCell(h['Status']).value || '').trim().toLowerCase();
+    if (st === 'confirmed') confirmed = true;
+    if (st === 'pending')   pending = true;
+    if (row.getCell(h['Last Notified']).value) notified = true;
+  }
+  ws.statusByDigits.set(digits, { confirmed, pending, notified, rowIndices });
+}
+
+
 function listSlotsForMessage(ws) {
   // Default list from current open slots (1..n)
   const lines = ws.availabilitySlots
@@ -626,17 +651,16 @@ app.post('/api/w/:ws/followup-broadcast', async (req, res) => {
     const { template } = req.body || {};
     if (!template || !template.trim()) return res.status(400).json({ ok:false, error:'template is required' });
 
-    // Build stable slots text (based on lastBroadcastOrder)
     const slotsText = listSlotsStable(ws);
+    const h = ws.excelState.headerMap;
 
-    // Find Pending numbers (skip Confirmed)
+    // Build recipients strictly from Excel where Status == 'pending'
     const toSend = [];
     for (const [wa, client] of ws.clientsByWa.entries()) {
-      const digits = phoneDigitsOnly(client.phone);
-      const agg = ws.statusByDigits.get(digits);
-      if (!agg) continue;
-      if (agg.confirmed) continue;
-      if (agg.pending) {
+      const row = findRowByPhone(ws, client.phone);
+      if (!row) continue;
+      const st = String(row.getCell(h['Status']).value || '').trim().toLowerCase();
+      if (st === 'pending') {
         toSend.push({ wa, client });
       }
     }
@@ -646,7 +670,6 @@ app.post('/api/w/:ws/followup-broadcast', async (req, res) => {
     }
 
     const whenSGT = sgtStamp();
-    const h = ws.excelState.headerMap;
 
     const tasks = toSend.map(async ({ wa, client }) => {
       const body = renderTemplate(template, {
@@ -655,7 +678,7 @@ app.post('/api/w/:ws/followup-broadcast', async (req, res) => {
       });
       await sendWa(wa, body);
 
-      // Update Last Notified on their row
+      // Update Last Notified (SGT) and keep Status as Pending
       const row = findRowByPhone(ws, client.phone);
       if (row) {
         row.getCell(h['Last Notified']).value = whenSGT;
@@ -663,6 +686,10 @@ app.post('/api/w/:ws/followup-broadcast', async (req, res) => {
         if (cur !== 'confirmed') row.getCell(h['Status']).value = 'Pending';
         row.commit();
       }
+
+      // keep aggregator consistent (optional)
+      const digits = phoneDigitsOnly(client.phone);
+      if (digits) refreshStatusForDigits(ws, digits);
     });
 
     await Promise.all(tasks);
@@ -674,6 +701,7 @@ app.post('/api/w/:ws/followup-broadcast', async (req, res) => {
     res.status(500).json({ ok:false, error: err.message });
   }
 });
+
 
 // ---------------------- API: templates per workspace ----------------------
 app.get('/api/w/:ws/templates', (req, res) => {
@@ -839,6 +867,18 @@ app.post('/whatsapp/inbound', async (req, res) => {
       row.commit();
       await saveExcel(ws);
     }
+    
+    // ✅ Sync in-memory aggregator & map after saving Excel
+    const digits = client ? phoneDigitsOnly(client.phone) : '';
+    if (digits) {
+      // Prefer to mirror Excel exactly:
+      refreshStatusForDigits(ws, digits);
+      // (or, minimally)
+      // const agg = ws.statusByDigits.get(digits) || { confirmed:false, pending:false, notified:false, rowIndices: [] };
+      // agg.confirmed = true; agg.pending = false;
+      // ws.statusByDigits.set(digits, agg);
+    }
+    if (client) client.status = 'confirmed';
 
     // Send confirmation using workspace template
     const slotLabel = humanSlotLabel(slot.start, slot.end);
