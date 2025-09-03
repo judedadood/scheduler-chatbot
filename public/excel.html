@@ -2,86 +2,121 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>View Excel • WA Scheduler</title>
+  <title>View Excel • Prudential WA Scheduler</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:24px; }
-    .nav { display:flex; align-items:center; gap:16px; padding:12px 16px; background:#111827; color:#fff; border-radius:12px; margin-bottom:16px; }
-    .nav a { color:#fff; text-decoration:none; padding:6px 10px; border-radius:6px; }
-    .nav a:hover { background:#1f2937; }
-    .brand { font-weight:700; margin-right:8px; }
-    .toolbar { display:flex; gap:12px; align-items:center; margin: 8px 0 16px; }
-    .btn { padding:8px 12px; border-radius:8px; border:1px solid #d1d5db; background:#111827; color:#fff; cursor:pointer; text-decoration:none; display:inline-block; }
-    .btn.secondary { background:#fff; color:#111827; }
-    #status { margin-left:8px; color:#6b7280; }
-    table { width:100%; border-collapse: collapse; }
-    th, td { border:1px solid #e5e7eb; padding:8px; text-align:left; }
-    th { background:#f3f4f6; }
-    .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; }
+    :root{ --line:#e5e7eb; --muted:#6b7280; }
+    html,body{ margin:0; background:#f9fafb; color:#111827; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    .container{ max-width: 1100px; margin:0 auto; padding: 12px 16px 40px; }
+
+    .nav{
+      position: sticky; top: 0; z-index: 1000;
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px; background: #111827; color: #fff;
+      border-radius: 12px; margin: 0 0 12px;
+    }
+    .nav .brand{ color:#fff; text-decoration:none; font-weight:700; flex:1; }
+    .nav .menu-btn{
+      display:inline-flex; align-items:center; justify-content:center;
+      background:transparent; border:1px solid #fff; color:#fff;
+      border-radius:8px; padding:6px 10px; font-size:16px; line-height:1;
+    }
+    .nav .links{ display:flex; gap:8px; flex-wrap:wrap; }
+    .nav .links a{ color:#fff; text-decoration:none; padding:8px 10px; border-radius:8px; }
+    .nav .links a:hover{ background:#1f2937; }
+    @media (max-width: 720px){
+      .nav{ border-radius:0; margin:0 -16px 12px; padding:12px 16px; }
+      .nav .links{ display:none; position:absolute; left:0; right:0; top:56px; background:#111827; padding:8px 16px; flex-direction:column; gap:4px; border-bottom:1px solid #1f2937; }
+      .nav.open .links{ display:flex; }
+      .nav .menu-btn{ display:inline-flex; }
+    }
+    @media (min-width: 721px){ .nav .menu-btn{ display:none; } }
+
+    .toolbar { display:flex; gap:8px; align-items:center; margin-bottom: 12px; }
+    .btn{ padding:8px 12px; border-radius:8px; border:1px solid #111827; background:#111827; color:#fff; cursor:pointer; }
+    .btn.secondary{ background:#fff; color:#111827; }
+    .muted{ color: var(--muted); }
+
+    .table-wrap{ overflow:auto; border:1px solid var(--line); border-radius:12px; background:#fff; }
+    table{ border-collapse:collapse; width:100%; min-width: 760px; }
+    thead th{ position: sticky; top: 0; background:#fff; border-bottom:1px solid var(--line); text-align:left; padding:10px; }
+    tbody td{ border-bottom:1px solid var(--line); padding:10px; }
+    tbody tr:hover{ background:#f9fafb; }
   </style>
 </head>
 <body>
-  <div class="nav">
-    <span class="brand">WhatsApp Scheduler</span>
-    <a href="/">Home</a>
-    <a href="/format">Format</a>
-    <a href="/excel">View Excel</a>
-    <a href="/followup">Follow-up</a>
+  <!-- Navbar -->
+  <div class="nav" data-nav>
+    <a class="brand" id="navBrand" href="#">Prudential WA Scheduler</a>
+    <button class="menu-btn" id="navToggle" aria-label="Menu" aria-expanded="false">☰</button>
+    <div class="links" id="navLinks">
+      <a id="navHome" href="#">Home</a>
+      <a id="navFormat" href="#">Format</a>
+      <a id="navExcel" href="#">View Excel</a>
+      <a id="navFollow" href="#">Follow-up</a>
+      <a href="/workspaces">Switch Excel</a>
+    </div>
   </div>
 
-  <h2>Current Excel</h2>
-  <div class="toolbar">
-    <a class="btn" href="/download-latest">Download Latest</a>
-    <button class="btn secondary" id="refresh">Refresh</button>
-    <span id="status"></span>
-  </div>
+  <div class="container">
+    <div class="toolbar">
+      <a id="downloadExcelLink" href="#"><button class="btn">Download Excel</button></a>
+      <button id="refreshBtn" class="btn secondary">Refresh</button>
+      <span id="meta" class="muted"></span>
+    </div>
 
-  <div class="card">
-    <div id="tableWrap">No data yet. Upload an Excel on the Home page.</div>
+    <div class="table-wrap">
+      <table id="grid"></table>
+    </div>
   </div>
 
   <script>
-    const refreshBtn = document.getElementById('refresh');
-    const statusEl = document.getElementById('status');
-    const tableWrap = document.getElementById('tableWrap');
+    (function(){
+      // Navbar wiring / workspace detection
+      const nav   = document.querySelector('[data-nav]');
+      const btn   = document.getElementById('navToggle');
+      const links = document.getElementById('navLinks');
+      function closeMenu(){ nav.classList.remove('open'); btn && btn.setAttribute('aria-expanded','false'); }
+      btn && btn.addEventListener('click', ()=>{ const open = nav.classList.toggle('open'); btn.setAttribute('aria-expanded', open ? 'true':'false'); });
+      links && links.addEventListener('click', (e)=>{ if (e.target.tagName === 'A') closeMenu(); });
+      window.addEventListener('resize', ()=>{ if (window.innerWidth >= 721) closeMenu(); });
 
-    function esc(s) {
-      return String(s == null ? '' : s)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
+      const parts = location.pathname.split('/').filter(Boolean);
+      if (parts[0] !== 'w' || !parts[1]) { if (location.pathname !== '/workspaces') location.href = '/workspaces'; return; }
+      const ws = parts[1];
 
-    function renderTable(headers, rows) {
-      if (!headers || !headers.length) {
-        tableWrap.innerHTML = '<em>No headers found in the current Excel.</em>';
-        return;
-      }
-      let thead = '<tr>' + headers.map(h => `<th>${esc(h)}</th>`).join('') + '</tr>';
-      let tbody = rows.map(r => {
-        return '<tr>' + headers.map(h => `<td>${esc(r[h])}</td>`).join('') + '</tr>';
-      }).join('');
-      tableWrap.innerHTML = `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
-    }
+      const setHref = (id, path) => { const el = document.getElementById(id); if (!el) return; el.href = path ? `/w/${ws}/${path}` : `/w/${ws}/`; };
+      setHref('navBrand',''); setHref('navHome',''); setHref('navFormat','format'); setHref('navExcel','excel'); setHref('navFollow','followup');
 
-    async function loadExcel() {
-      statusEl.textContent = 'Loading...';
-      try {
-        const res = await fetch('/excel-json');
-        const data = await res.json();
-        if (!data.ok) {
-          tableWrap.innerHTML = `<em>${esc(data.error || 'Unable to load Excel')}</em>`;
-          statusEl.textContent = '';
-          return;
+      document.getElementById('downloadExcelLink').href = `/api/w/${ws}/download-latest`;
+
+      const metaEl = document.getElementById('meta');
+      const grid = document.getElementById('grid');
+
+      async function loadExcel(){
+        grid.innerHTML = '<thead><tr><th>Loading…</th></tr></thead>';
+        try{
+          const res = await fetch(`/api/w/${ws}/excel`);
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || 'Failed to load');
+          // Build table
+          const headers = data.headers || [];
+          const rows = data.rows || [];
+
+          const thead = `<thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>`;
+          const tbody = `<tbody>${rows.map(r=>`<tr>${headers.map(h=>`<td>${(r[h] ?? '').toString()}</td>`).join('')}</tr>`).join('')}</tbody>`;
+          grid.innerHTML = thead + tbody;
+
+          metaEl.textContent = `${rows.length} rows • ${headers.length} columns`;
+        }catch(err){
+          grid.innerHTML = `<thead><tr><th>Error</th></tr></thead><tbody><tr><td>${err.message}</td></tr></tbody>`;
+          metaEl.textContent = '';
         }
-        renderTable(data.headers, data.rows);
-        statusEl.textContent = `Rows: ${data.rows.length}`;
-      } catch (e) {
-        tableWrap.innerHTML = '<em>Error loading Excel.</em>';
-        statusEl.textContent = '';
       }
-    }
 
-    refreshBtn.addEventListener('click', loadExcel);
-    loadExcel(); // initial
+      document.getElementById('refreshBtn').addEventListener('click', loadExcel);
+      loadExcel();
+    })();
   </script>
 </body>
 </html>

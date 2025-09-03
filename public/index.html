@@ -1,116 +1,185 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>WhatsApp Scheduler</title>
+  <meta charset="utf-8" />
+  <title>Home • Prudential WA Scheduler</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-    h1 { margin-bottom: 8px; }
-    section { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-    label { display:block; margin: 8px 0 4px; font-weight: 600; }
-    textarea, input[type=file] { width: 100%; }
-    button { padding: 10px 16px; border-radius: 10px; border: 1px solid #222; background: #fff; cursor: pointer; }
-    button:hover { background: #f5f5f5; }
-    pre { background: #f7f7f7; padding: 12px; border-radius: 8px; overflow: auto; }
-    .grid { display:grid; grid-template-columns: 1fr; gap: 12px; }
-    @media (min-width: 800px){ .grid { grid-template-columns: 1fr 1fr; } }
+    :root{ --ink:#111827; --ink2:#1f2937; --line:#e5e7eb; --muted:#6b7280; }
+    html,body{ margin:0; background:#f9fafb; color:#111827; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    .container{ max-width: 980px; margin:0 auto; padding: 12px 16px 40px; }
+    section { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+    label{ display:block; margin:8px 0 4px; font-weight:600; }
+    textarea, input[type=file], select { width:100%; }
+    button{ padding:10px 16px; border-radius:10px; border:1px solid #222; background:#111827; color:#fff; cursor:pointer; }
+    button.secondary{ background:#fff; color:#111827; }
+    pre{ background:#f3f4f6; padding:12px; border-radius:8px; overflow:auto; }
+    .muted{ color:var(--muted); }
 
-    /* Navbar */
-    .nav { display:flex; align-items:center; gap:16px; padding:12px 16px; background:#111827; color:#fff; border-radius:12px; margin-bottom:16px; }
-    .nav a { color:#fff; text-decoration:none; padding:6px 10px; border-radius:6px; }
-    .nav a:hover { background:#1f2937; }
-    .brand { font-weight:700; margin-right:8px; }
-    table { width:100%; border-collapse: collapse; }
-    th, td { border:1px solid #e5e7eb; padding:8px; text-align:left; }
-    th { background:#f3f4f6; }
+    /* Mobile-first responsive navbar */
+    .nav{
+      position: sticky; top: 0; z-index: 1000;
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px; background: #111827; color: #fff;
+      border-radius: 12px; margin: 0 0 12px;
+    }
+    .nav .brand{ color:#fff; text-decoration:none; font-weight:700; flex:1; }
+    .nav .menu-btn{
+      display:inline-flex; align-items:center; justify-content:center;
+      background:transparent; border:1px solid #fff; color:#fff;
+      border-radius:8px; padding:6px 10px; font-size:16px; line-height:1;
+    }
+    .nav .links{ display:flex; gap:8px; flex-wrap:wrap; }
+    .nav .links a{ color:#fff; text-decoration:none; padding:8px 10px; border-radius:8px; }
+    .nav .links a:hover{ background:#1f2937; }
+    @media (max-width: 720px){
+      .nav{ border-radius:0; margin:0 -16px 12px; padding:12px 16px; }
+      .nav .links{
+        display:none; position:absolute; left:0; right:0; top:56px;
+        background:#111827; padding:8px 16px; flex-direction:column; gap:4px; border-bottom:1px solid #1f2937;
+      }
+      .nav.open .links{ display:flex; }
+      .nav .menu-btn{ display:inline-flex; }
+    }
+    @media (min-width: 721px){ .nav .menu-btn{ display:none; } }
   </style>
 </head>
 <body>
-  <!-- NAVBAR -->
-  <div class="nav">
-    <span class="brand">WhatsApp Scheduler</span>
-    <a href="/">Home</a>
-    <a href="/format">Format</a>
-    <a href="/excel">View Excel</a>
-    <a href="/followup">Follow-up</a>
+  <!-- Navbar -->
+  <div class="nav" data-nav>
+    <a class="brand" id="navBrand" href="#">Prudential WA Scheduler</a>
+    <button class="menu-btn" id="navToggle" aria-label="Menu" aria-expanded="false">☰</button>
+    <div class="links" id="navLinks">
+      <a id="navHome" href="#">Home</a>
+      <a id="navFormat" href="#">Format</a>
+      <a id="navExcel" href="#">View Excel</a>
+      <a id="navFollow" href="#">Follow-up</a>
+      <a href="/workspaces">Switch Excel</a>
+    </div>
   </div>
 
-  <h1>WhatsApp Scheduler</h1>
-  <p>Upload your client Excel, paste availability, broadcast slots, and view/download the updated Excel.</p>
+  <div class="container">
+    <h1 style="margin:8px 0 4px;">WhatsApp Scheduler</h1>
+    <p id="wsInfo" class="muted"></p>
 
-  <section>
-    <h2>1) Upload Clients Excel</h2>
-    <form id="uploadForm">
-      <label>Excel File (.xlsx)</label>
-      <input type="file" name="file" accept=".xlsx" required>
-      <br><br>
-      <button type="submit" style="color: black;">Upload</button>
-    </form>
-    <pre id="uploadResult"></pre>
-  </section>
+    <!-- 1) Upload (hidden if workspace already has Excel) -->
+    <section id="uploadSection">
+      <h2>1) Upload Clients Excel</h2>
+      <form id="uploadForm">
+        <label>Excel File (.xlsx)</label>
+        <input type="file" name="file" accept=".xlsx" required />
+        <div style="height:10px"></div>
+        <button type="submit">Upload</button>
+      </form>
+      <pre id="uploadResult"></pre>
+    </section>
 
-  <section>
-    <h2>2) Set Availability</h2>
-    <label>Availability Text (one per line)</label>
-    <textarea id="availabilityText" rows="6" placeholder="25 Aug 1-5pm&#10;26 Aug 2-7pm"></textarea>
-    <br>
-    <label>Buffer between meetings</label>
-    <select id="buffer">
-      <option value="0" selected>0 min</option>
-      <option value="30">30 min</option>
-      <option value="60">60 min</option>
-    </select>
-    <br><br>
+    <!-- 2) Set Availability -->
+    <section>
+      <h2>2) Set Availability</h2>
+      <label>Availability Text (one per line)</label>
+      <textarea id="availabilityText" rows="6" placeholder="25 Aug 1-5pm&#10;26 Aug 2-7pm"></textarea>
+      <label>Buffer between meetings</label>
+      <select id="buffer">
+        <option value="0" selected>0 min</option>
+        <option value="30">30 min</option>
+        <option value="60">60 min</option>
+      </select>
+      <div style="height:10px"></div>
+      <button id="setAvBtn">Set Availability</button>
+      <pre id="avResult"></pre>
+    </section>
 
-    <button id="setAvBtn">Set Availability</button>
-    <pre id="avResult"></pre>
-  </section>
+    <!-- 3) Broadcast -->
+    <section>
+      <h2>3) Broadcast to All Clients</h2>
+      <button id="broadcastBtn">Broadcast Now</button>
+      <pre id="broadcastResult"></pre>
+    </section>
 
-  <section>
-    <h2>3) Broadcast to All Clients (WhatsApp)</h2>
-    <button id="broadcastBtn">Broadcast Now</button>
-    <pre id="broadcastResult"></pre>
-  </section>
+    <!-- 4) View Excel -->
+    <section>
+      <h2>4) View Updated Excel</h2>
+      <a id="viewExcelLink" href="#"><button class="secondary">Open Viewer</button></a>
+      <a id="downloadExcelLink" href="#"><button>Download Excel</button></a>
+    </section>
+  </div>
 
-  <section>
-    <h2>4) View Updated Excel</h2>
-    <a href="/excel"><button>View Updated Excel</button></a>
-  </section>
+  <script>
+    // Workspace-aware link wiring
+    (function () {
+      const nav   = document.querySelector('[data-nav]');
+      const btn   = document.getElementById('navToggle');
+      const links = document.getElementById('navLinks');
 
-<script>
-  const uploadForm = document.getElementById('uploadForm');
-  const uploadResult = document.getElementById('uploadResult');
-  const setAvBtn = document.getElementById('setAvBtn');
-  const avResult = document.getElementById('avResult');
-  const broadcastBtn = document.getElementById('broadcastBtn');
-  const broadcastResult = document.getElementById('broadcastResult');
+      function closeMenu(){ nav.classList.remove('open'); btn && btn.setAttribute('aria-expanded','false'); }
+      btn && btn.addEventListener('click', ()=>{
+        const open = nav.classList.toggle('open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      links && links.addEventListener('click', (e)=>{ if (e.target.tagName === 'A') closeMenu(); });
+      window.addEventListener('resize', ()=>{ if (window.innerWidth >= 721) closeMenu(); });
 
-  uploadForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData(uploadForm);
-    const res = await fetch('/upload-clients', { method: 'POST', body: formData });
-    const data = await res.json();
-    uploadResult.textContent = JSON.stringify(data, null, 2);
-  });
+      const parts = location.pathname.split('/').filter(Boolean);
+      if (parts[0] !== 'w' || !parts[1]) { if (location.pathname !== '/workspaces') location.href = '/workspaces'; return; }
+      const ws = parts[1];
 
-  setAvBtn.addEventListener('click', async () => {
-    const availabilityText = document.getElementById('availabilityText').value;
-    const bufferMinutes = document.getElementById('buffer').value; // "0" | "30" | "60"
-    const res = await fetch('/set-availability', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ availabilityText, bufferMinutes })
-    });
-    const data = await res.json();
-    avResult.textContent = JSON.stringify(data, null, 2);
-  });
+      const setHref = (id, path) => { const el = document.getElementById(id); if (!el) return; el.href = path ? `/w/${ws}/${path}` : `/w/${ws}/`; };
+      setHref('navBrand','');
+      setHref('navHome','');
+      setHref('navFormat','format');
+      setHref('navExcel','excel');
+      setHref('navFollow','followup');
 
-  broadcastBtn.addEventListener('click', async () => {
-    const res = await fetch('/broadcast', { method: 'POST' });
-    const data = await res.json();
-    broadcastResult.textContent = JSON.stringify(data, null, 2);
-  });
-</script>
+      // Hide upload if Excel already loaded in this workspace
+      (async () => {
+        const infoRes = await fetch(`/api/w/${ws}/info`);
+        const info = await infoRes.json();
+        const uploadSection = document.getElementById('uploadSection');
+        const wsInfo = document.getElementById('wsInfo');
+
+        document.getElementById('viewExcelLink').href = `/w/${ws}/excel`;
+        document.getElementById('downloadExcelLink').href = `/api/w/${ws}/download-latest`;
+
+        if (info.ok && info.hasExcel) {
+          if (wsInfo) wsInfo.textContent = `Using: ${info.workbookName} • ${info.totalClients} clients loaded`;
+          if (uploadSection) uploadSection.style.display = 'none';
+        } else {
+          if (wsInfo) wsInfo.textContent = 'No Excel loaded yet — please upload one below.';
+        }
+      })();
+
+      // Upload Excel
+      const uploadForm = document.getElementById('uploadForm');
+      const uploadResult = document.getElementById('uploadResult');
+      uploadForm && uploadForm.addEventListener('submit', async (e)=>{
+        e.preventDefault();
+        const fd = new FormData(uploadForm);
+        uploadResult.textContent = 'Uploading…';
+        const res = await fetch(`/api/w/${ws}/upload-clients`, { method:'POST', body: fd });
+        const data = await res.json();
+        uploadResult.textContent = JSON.stringify(data, null, 2);
+      });
+
+      // Set availability
+      document.getElementById('setAvBtn').addEventListener('click', async ()=>{
+        const availabilityText = document.getElementById('availabilityText').value;
+        const bufferMinutes = document.getElementById('buffer').value;
+        const res = await fetch(`/api/w/${ws}/set-availability`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ availabilityText, bufferMinutes })
+        });
+        const data = await res.json();
+        document.getElementById('avResult').textContent = JSON.stringify(data, null, 2);
+      });
+
+      // Broadcast
+      document.getElementById('broadcastBtn').addEventListener('click', async ()=>{
+        const res = await fetch(`/api/w/${ws}/broadcast`, { method:'POST' });
+        const data = await res.json();
+        document.getElementById('broadcastResult').textContent = JSON.stringify(data, null, 2);
+      });
+    })();
+  </script>
 </body>
 </html>

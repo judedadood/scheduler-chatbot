@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Choose Excel Workspace • Prudential WA Scheduler</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --ink:#111827; --ink2:#1f2937; --bg:#ffffff; --muted:#6b7280; --line:#e5e7eb; --accent:#111827; }
+    html,body { margin:0; background:#f9fafb; color:#111827; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    .container { max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
+    h1 { margin: 8px 0 4px; }
+    p.lead { color: var(--muted); margin: 0 0 18px; }
+    .card { background: #fff; border:1px solid var(--line); border-radius: 12px; padding: 16px; }
+    .row { display:grid; grid-template-columns: 1fr; gap:16px; }
+    @media (min-width: 900px){ .row { grid-template-columns: 1fr 1fr; } }
+
+    .ws-list .item { display:flex; align-items:center; justify-content:space-between; border:1px solid var(--line); padding:12px 12px; border-radius:10px; margin:10px 0; background:#fff; }
+    .ws-list .item .meta { display:flex; flex-direction:column; gap:2px; }
+    .ws-list .item .name { font-weight:600; }
+    .ws-list .item .sub { color: var(--muted); font-size: 13px; }
+    .btn { appearance:none; border:1px solid var(--ink); background:var(--ink); color:#fff; padding:10px 14px; border-radius:10px; cursor:pointer; }
+    .btn.secondary { background:#fff; color:var(--ink); }
+    .muted { color:var(--muted); }
+    .grid-2 { display:grid; grid-template-columns: 1fr; gap:12px; }
+    @media (min-width: 720px){ .grid-2 { grid-template-columns: 2fr 1fr; } }
+
+    .upload { border:1px dashed var(--line); padding:16px; border-radius:12px; background:#fff; }
+    .upload input[type=file]{ width:100%; }
+    .hint { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Choose an Excel Workspace</h1>
+    <p class="lead">Pick an existing workspace, or upload a new Excel to create one.</p>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3 style="margin-top:0">Your Workspaces</h3>
+        <div id="list" class="ws-list"></div>
+        <div id="empty" class="muted" style="display:none">No workspaces yet. Create one on the right.</div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">Create New Workspace</h3>
+        <form id="createForm" class="upload">
+          <label>Excel File (.xlsx)</label>
+          <input type="file" name="file" accept=".xlsx" required />
+          <div style="height:10px"></div>
+          <button class="btn" type="submit">Upload & Create</button>
+          <div style="height:10px"></div>
+          <div id="createMsg" class="hint"></div>
+        </form>
+        <p class="hint">Each workspace stores its own clients, templates, and availability.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function loadList(){
+      const listEl = document.getElementById('list');
+      const emptyEl = document.getElementById('empty');
+      listEl.innerHTML = '<div class="muted">Loading…</div>';
+      try{
+        const res = await fetch('/api/workspaces');
+        const data = await res.json();
+        if(!data.ok) throw new Error(data.error || 'Failed to load workspaces');
+        listEl.innerHTML = '';
+        if(!data.workspaces || !data.workspaces.length){
+          emptyEl.style.display = 'block';
+          return;
+        }
+        emptyEl.style.display = 'none';
+        data.workspaces.forEach(ws=>{
+          const div = document.createElement('div');
+          div.className = 'item';
+          div.innerHTML = `
+            <div class="meta">
+              <span class="name">${ws.name || 'Workspace ' + ws.id}</span>
+              <span class="sub">${ws.workbookName ? ('Excel: ' + ws.workbookName) : 'No Excel yet'} • ${ws.totalClients ?? 0} clients</span>
+            </div>
+            <div>
+              <button class="btn secondary" data-open="${ws.id}">Open</button>
+              <button class="btn" data-del="${ws.id}" style="margin-left:8px;">Delete</button>
+            </div>
+          `;
+          listEl.appendChild(div);
+        });
+
+        // single delegated handler for both buttons
+        listEl.addEventListener('click', async (e)=>{
+          const openId = e.target && e.target.getAttribute('data-open');
+          const delId  = e.target && e.target.getAttribute('data-del');
+
+          if (openId) {
+            location.href = `/w/${openId}/`;
+            return;
+          }
+          if (delId) {
+            const name = (e.target.closest('.item')?.querySelector('.name')?.textContent || delId).trim();
+            if (!confirm(`Delete workspace "${name}"?\n\nThis removes its Excel and data permanently.`)) return;
+            const resp = await fetch(`/api/workspaces/${encodeURIComponent(delId)}`, { method: 'DELETE' });
+            let payload = {};
+            try { payload = await resp.json(); } catch {}
+            if (!resp.ok || !payload.ok) {
+              alert(payload.error || 'Failed to delete workspace.');
+              return;
+            }
+            await loadList();
+          }
+        }, { once: true }); // re-bound when list reloads
+      }catch(err){
+        listEl.innerHTML = `<div class="muted">${err.message}</div>`;
+      }
+    }
+
+    document.getElementById('createForm').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const msg = document.getElementById('createMsg');
+      msg.textContent = 'Uploading…';
+      const fd = new FormData(e.currentTarget);
+      try{
+        const res = await fetch('/api/workspaces', { method:'POST', body: fd });
+        const data = await res.json();
+        if(!data.ok) throw new Error(data.error || 'Create failed');
+        msg.textContent = 'Created. Redirecting…';
+        location.href = `/w/${data.id}/`;
+      }catch(err){
+        msg.textContent = err.message;
+      }
+    });
+
+    loadList();
+  </script>
+</body>
+</html>
