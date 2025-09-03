@@ -1,5 +1,5 @@
 // server.js
-// Prudential WhatsApp Scheduler Bot (Workspace edition)
+//  WhatsApp Scheduler Bot (Workspace edition)
 // Tech: Node.js, Express, Twilio WhatsApp, ExcelJS, Multer
 
 require('dotenv').config();
